@@ -1,4 +1,4 @@
-import { C, UPGRADES, createWorld, step, tideAt, fingerprint } from './sim.js';
+import { C, UPGRADES, RINGS, createWorld, step, tideAt, fingerprint } from './sim.js';
 import { makeBot } from './bot.js';
 import { createLoop } from '../../src/loop.js';
 import { createHold, bindInput } from '../../src/input.js';
@@ -17,16 +17,22 @@ const hold = createHold();
 const audio = createAudio({ muted: store.load('muted', false) });
 // Calm motion follows the system setting until the player chooses otherwise.
 let calm = store.load('calm', matchMedia('(prefers-reduced-motion: reduce)').matches);
-let best = store.load('best', null);          // most seconds to spare on a finished castle
 // Shells banked from past runs and the upgrades bought with them. Versioned,
 // so a later change to its shape starts clean instead of misreading it.
 const META_V = 1;
 let meta = store.load('meta', null);
 if (!meta || meta.v !== META_V) meta = { v: META_V, bank: 0, up: {} };
+// The castle itself: how many rings stand, how many whole castles are done,
+// and the most seconds to spare on each ring.
+meta.rings = Math.max(0, Math.min(RINGS.length, meta.rings | 0));
+meta.castles |= 0;
+if (!Array.isArray(meta.best)) meta.best = [];
 const saveMeta = () => store.save('meta', meta);
 let shopOpen = false;
 
-let world = createWorld(newSeed());
+const complete = () => meta.rings >= RINGS.length;
+const newWorld = () => createWorld(newSeed(), meta.up, complete() ? RINGS.length - 1 : meta.rings);
+let world = newWorld();
 let mode = 'title', endAt = 0, time = 0, freeze = 0;
 let crabScreen = { x: innerWidth / 2, y: innerHeight / 2 };
 
@@ -46,7 +52,8 @@ function sound(e) {
 
 function begin() {
   // A new run is a new world, made before anything is shown.
-  world = createWorld(newSeed(), meta.up);
+  if (complete()) { meta.castles++; meta.rings = 0; saveMeta(); }   // a finished castle: start the next on bare sand
+  world = newWorld();
   renderer.clear();
   freeze = 0;
   mode = 'play';
@@ -56,6 +63,7 @@ function begin() {
 
 function hud() {
   $('count').textContent = `${world.built} / ${C.NEED}`;
+  $('ringname').textContent = complete() ? 'Castle complete' : `Ring ${world.ring + 1} of ${RINGS.length}: ${RINGS[world.ring].name}`;
   const u = tideAt(world).u;
   $('tide').style.width = `${Math.round(u * 100)}%`;
   $('bar').classList.toggle('close', u > 0.75 && world.phase === 'play');
@@ -67,11 +75,21 @@ function banner(text) {
   b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
 }
 
+function titleCard() {
+  const n = meta.rings;
+  $('title').textContent = 'Crab Castle';
+  $('line').textContent = complete()
+    ? `Your castle is complete, all ${RINGS.length} rings of it. Build the next one from bare sand.`
+    : n === 0
+      ? 'Carry shells up the beach and finish the keep before the tide reaches it. The more you carry, the more the gulls want it.'
+      : `${n} ring${n > 1 ? 's' : ''} of your castle still stand${n > 1 ? '' : 's'}. Next is ${RINGS[n].name}, lower on the beach, where the tide comes sooner. Lose and the tide knocks down your newest ring.`;
+}
+
 function finish(title, line) {
   mode = 'end'; endAt = performance.now();
   // Every shell that reached the castle is banked, win or lose.
   meta.bank += world.built; saveMeta();
-  line += ` ${world.built} shells banked for the shop.`;
+  line += ` ${world.built} shell${world.built === 1 ? '' : 's'} banked for the shop.`;
   $('banner').classList.remove('show');
   $('title').textContent = title;
   $('line').textContent = line;
@@ -105,12 +123,16 @@ function tick() {
     else if (e.type === 'tide') banner('The tide is coming in');
     else if (e.type === 'tier') banner(e.tier === 1 ? 'Here come the gulls' : e.tier === C.TIERS - 1 ? 'One tier to go' : 'The gulls scatter');
     else if (e.type === 'won') {
-      const spare = Math.floor(e.spare * C.TICK);
-      const beaten = best === null || spare > best;
-      if (beaten) { best = spare; store.save('best', best); }
-      finish('The castle stands', `Finished with ${spare} seconds to spare.${beaten ? ' Your best yet.' : ` Your best is ${best}.`}`);
+      const spare = Math.floor(e.spare * C.TICK), r = world.ring, best = meta.best[r];
+      const beaten = best == null || spare > best;
+      if (beaten) meta.best[r] = spare;
+      meta.rings = r + 1;
+      finish(complete() ? 'The castle is complete' : RINGS[r].stands,
+        `Finished with ${spare} seconds to spare.${beaten ? ' Your best on this ring yet.' : ` Your best here is ${best}.`}${complete() ? '' : ` Next is ${RINGS[r + 1].name}, lower down the beach.`}`);
     } else if (e.type === 'lost') {
-      finish('The tide took it', `${e.built} of ${C.NEED} shells were in place.${best === null ? '' : ` Your best finish had ${best} seconds to spare.`}`);
+      const r = world.ring, fell = r > 0 ? RINGS[r - 1].name : null;
+      meta.rings = Math.max(0, r - 1);
+      finish('The tide took it', `${e.built} of ${C.NEED} shells of ${RINGS[r].name} were in place.${fell ? ` The sea knocked down ${fell} as well.` : ''}`);
     }
   }
   hud();
@@ -155,7 +177,7 @@ function labels() {
 }
 $('sound').addEventListener('click', (e) => { audio.unlock(); toggleSound(); e.currentTarget.blur(); });
 $('motion').addEventListener('click', (e) => { calm = !calm; store.save('calm', calm); labels(); e.currentTarget.blur(); });
-labels(); hud();
+labels(); titleCard(); hud();
 
 // The shop: open from the title or end card, never during a run.
 function renderShop() {

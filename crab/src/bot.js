@@ -20,7 +20,7 @@ export function makeBot({ habit = HABITS.read, react = 10 } = {}) {
     let want = habit({ gulls: s.gulls.length, rest: s.rest > 0, tier: tierOf(s.built), carry: s.carry });
     want = Math.max(1, Math.min(s.k ? s.k.maxCarry : C.MAX_CARRY, want, C.NEED - s.built));
 
-    let tx = C.CASTLE_X, ty = C.CASTLE_Y;
+    let tx = s.goal.x, ty = s.goal.y;
     if (s.carry < want) {
       let best = null, bd = Infinity;
       for (const sh of s.shells) {

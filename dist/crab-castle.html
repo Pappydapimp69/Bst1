@@ -10,6 +10,7 @@
   #hud { position: fixed; inset: 0; pointer-events: none; }
   #stats { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: max(12px, env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 6px; }
   #count { font: 800 22px/1 var(--display); background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px 4px; align-self: flex-start; font-variant-numeric: tabular-nums; }
+  #ringname { font: 700 13px/1 var(--body); text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 3px var(--paper); }
   #tiderow { display: flex; align-items: center; gap: 6px; }
   #tidelabel { font: 700 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper); }
   #bar { width: min(34vw, 200px); height: 12px; border-radius: 8px; background: var(--paper); border: 2px solid var(--ink); overflow: hidden; }
@@ -23,8 +24,9 @@
   #banner.show { animation: rise 2.4s ease-out; }
   @keyframes rise { 0% { opacity: 0; transform: translateY(10px); } 15% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { #banner.show { animation-name: fade; } @keyframes fade { 0%, 100% { opacity: 0; } 15%, 70% { opacity: 1; } } }
-  #overlay { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none;
-    padding-block: 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  /* The card sits low so the castle stays in view above it. */
+  #overlay { position: fixed; inset: 0; display: grid; place-items: end center; text-align: center; pointer-events: none;
+    padding-top: 24px; padding-bottom: max(24px, 5vh); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   #overlay[hidden] { display: none; }
   #card { background: var(--paper); border: 3px solid var(--ink); border-radius: 18px; padding: 22px 26px 20px; max-width: 26em; box-shadow: 6px 6px 0 rgba(59,42,26,.25); }
   #card h1 { margin: 0 0 8px; font: 800 clamp(34px, 9vw, 56px)/1 var(--display); color: #e2553d; text-wrap: balance; }
@@ -52,7 +54,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@800&family=Nunito:wght@400;600;700&display=swap">
 <canvas id="game" aria-label="Crab Castle game"></canvas>
 <div id="hud">
-  <div id="stats"><span id="count" aria-label="Shells in the castle">0 / 50</span><div id="tiderow"><span id="tidelabel">Tide</span><div id="bar" role="img" aria-label="How far the tide has come"><div id="tide"></div></div></div></div>
+  <div id="stats"><span id="ringname"></span><span id="count" aria-label="Shells in this ring">0 / 50</span><div id="tiderow"><span id="tidelabel">Tide</span><div id="bar" role="img" aria-label="How far the tide has come"><div id="tide"></div></div></div></div>
   <div id="buttons"><button id="sound" type="button">Sound on</button><button id="motion" type="button">Motion full</button></div>
   <div id="banner" aria-live="polite"></div>
 </div>
@@ -130,7 +132,28 @@ const C = {
   ORBIT: 170, ORBIT_FAR: 330, GULL_SPEED: 260,
   WIND: 48, DIVE_SPEED: 430, HIT_R: 18, HIT_PER_SHELL: 6,
   COOL: 270, COOL_PER_SHELL: 0.5, REST: 480,
+  RING_DROP: 70,
 };
+
+// The castle outlasts a run. Each finished ring stays standing for the next,
+// and each new ring sits lower on the beach, so the tide reaches it sooner and
+// the same crab has less time. Losing a run knocks down the newest ring.
+const RINGS = [
+  { name: 'the keep', stands: 'The keep stands' },
+  { name: 'the curtain wall', stands: 'The curtain wall stands' },
+  { name: 'the towers', stands: 'The towers stand' },
+  { name: 'the second keep', stands: 'The second keep stands' },
+  { name: 'the outer wall', stands: 'The outer wall stands' },
+];
+function ringPlace(ring) {
+  const foot = C.CASTLE_FOOT + ring * C.RING_DROP;
+  return {
+    goal: { x: C.CASTLE_X, y: C.CASTLE_Y + ring * C.RING_DROP },
+    foot,
+    // The sea comes in at the same pace, so a lower ring is reached sooner.
+    tideTicks: Math.round(C.TIDE_TICKS * (C.TIDE_START - foot) / (C.TIDE_START - C.CASTLE_FOOT)),
+  };
+}
 const ROT_C = 0.9998000066665778, ROT_S = 0.01999866669333308;   // cos and sin of 0.02 rad
 
 // Upgrades bought between runs with banked shells. Each one eases a single job
@@ -156,17 +179,21 @@ function crabStats(up = {}) {
   };
 }
 
-function createWorld(seed, upgrades = {}) {
+function createWorld(seed, upgrades = {}, ring = 0) {
+  ring = Math.max(0, Math.min(RINGS.length - 1, ring | 0));
+  const at = ringPlace(ring), gy = at.goal.y;
   const s = {
+    ring, goal: at.goal, foot: at.foot, tideTicks: at.tideTicks,
     seed: String(seed), tick: 0, phase: 'wait', startTick: 0, endTick: 0,
     rng: { wash: makeStream(seed, 'wash'), gulls: makeStream(seed, 'gulls') },
-    crab: { x: C.CASTLE_X, y: 330, px: C.CASTLE_X, py: 330, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
+    crab: { x: C.CASTLE_X, y: gy + 200, px: C.CASTLE_X, py: gy + 200, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
     k: crabStats(upgrades), carry: 0, built: 0, shells: [], gulls: [], rest: 0, nextId: 1, events: [],
   };
   // The first shell lies between the crab and the plain way down the beach;
   // nothing else moves until it has been carried home.
-  s.shells.push({ id: s.nextId++, x: C.CASTLE_X, y: 450, wait: 0 });
-  for (let i = 0; i < 5; i++) s.shells.push({ id: s.nextId++, x: 60 + next(s.rng.wash) * (C.W - 120), y: 600 + next(s.rng.wash) * 250, wait: 0 });
+  s.shells.push({ id: s.nextId++, x: C.CASTLE_X, y: gy + 320, wait: 0 });
+  const lo = Math.max(600, at.foot + 200);
+  for (let i = 0; i < 5; i++) s.shells.push({ id: s.nextId++, x: 60 + next(s.rng.wash) * (C.W - 120), y: lo + next(s.rng.wash) * (850 - lo), wait: 0 });
   return s;
 }
 
@@ -175,8 +202,8 @@ function createWorld(seed, upgrades = {}) {
 function tideAt(s, tick = s.tick) {
   if (s.phase === 'wait') return { calm: C.TIDE_START, line: C.TIDE_START, u: 0 };
   const end = s.phase === 'play' ? tick : s.endTick;
-  const u = Math.min(1, (end - s.startTick) / C.TIDE_TICKS);
-  const calm = C.TIDE_START - (C.TIDE_START - C.CASTLE_FOOT) * u;
+  const foot = s.foot ?? C.CASTLE_FOOT, u = Math.min(1, (end - s.startTick) / (s.tideTicks ?? C.TIDE_TICKS));
+  const calm = C.TIDE_START - (C.TIDE_START - foot) * u;
   const w = ((tick - s.startTick) % C.WAVE_TICKS) / C.WAVE_TICKS;
   const tri = w < 0.5 ? 1 - 4 * w : 4 * w - 3;                    // 1 at the crest, -1 at the ebb
   return { calm, line: calm - tri * C.WAVE_AMP, u };
@@ -189,7 +216,7 @@ const speedWith = (carry, wet, k = crabStats()) => C.CRAB_MAX * (1 - k.loadSlow 
 function washUp(s, calm) {
   for (let i = 0; i < C.SHELLS_PER_WAVE && s.shells.length < C.SHELLS_ON_BEACH; i++) {
     const x = 40 + next(s.rng.wash) * (C.W - 80);
-    const y = Math.max(C.CASTLE_FOOT + 40, calm - 15 - next(s.rng.wash) * 95);
+    const y = Math.max(s.foot + 40, calm - 15 - next(s.rng.wash) * 95);
     s.shells.push({ id: s.nextId++, x, y, wait: 0 });
   }
 }
@@ -251,7 +278,7 @@ function step(s, input) {
       }
     }
   }
-  if (s.carry > 0 && Math.hypot(c.x - C.CASTLE_X, c.y - C.CASTLE_Y) < C.CASTLE_R + C.CRAB_R) {
+  if (s.carry > 0 && Math.hypot(c.x - s.goal.x, c.y - s.goal.y) < C.CASTLE_R + C.CRAB_R) {
     const before = tierOf(s.built);
     s.built = Math.min(C.NEED, s.built + s.carry);
     s.events.push({ type: 'build', n: s.carry, built: s.built });
@@ -259,7 +286,7 @@ function step(s, input) {
     if (s.phase === 'wait') { s.phase = 'play'; s.startTick = s.tick; s.events.push({ type: 'tide' }); }
     if (s.built >= C.NEED) {
       s.phase = 'won'; s.endTick = s.tick;
-      s.events.push({ type: 'won', spare: C.TIDE_TICKS - (s.tick - s.startTick) });
+      s.events.push({ type: 'won', spare: s.tideTicks - (s.tick - s.startTick) });
       return s;
     }
     if (tierOf(s.built) > before) {
@@ -348,7 +375,7 @@ function makeBot({ habit = HABITS.read, react = 10 } = {}) {
     let want = habit({ gulls: s.gulls.length, rest: s.rest > 0, tier: tierOf(s.built), carry: s.carry });
     want = Math.max(1, Math.min(s.k ? s.k.maxCarry : C.MAX_CARRY, want, C.NEED - s.built));
 
-    let tx = C.CASTLE_X, ty = C.CASTLE_Y;
+    let tx = s.goal.x, ty = s.goal.y;
     if (s.carry < want) {
       let best = null, bd = Infinity;
       for (const sh of s.shells) {
@@ -647,7 +674,7 @@ function createRenderer(canvas) {
   const g = canvas.getContext('2d');
   const view = { scale: 1, dpr: 1, cssW: 0, cssH: 0, ox: 0, oy: 0 };
   const particles = [], popups = [];
-  let shake = 0, walk = 0;
+  let shake = 0, walk = 0, goal = { x: C.CASTLE_X, y: C.CASTLE_Y };
 
   function fit() {
     const dpr = globalThis.devicePixelRatio || 1;
@@ -675,11 +702,11 @@ function createRenderer(canvas) {
   function onEvent(e, calm) {
     const k = calm ? 0.3 : 1;
     if (e.type === 'pick') burst(e.x, e.y, Math.ceil(5 * k), ['#fff6dc', '#f6dcc6'], 90);
-    if (e.type === 'build') { burst(C.CASTLE_X, C.CASTLE_Y, Math.ceil((6 + 4 * e.n) * k), ['#fff6dc', '#e8c98a', '#f4a99a'], 170); popups.push({ x: C.CASTLE_X, y: C.CASTLE_Y - 70, text: '+' + e.n, life: 1, color: '#2f7d4f' }); }
+    if (e.type === 'build') { burst(goal.x, goal.y, Math.ceil((6 + 4 * e.n) * k), ['#fff6dc', '#e8c98a', '#f4a99a'], 170); popups.push({ x: goal.x, y: goal.y - 70, text: '+' + e.n, life: 1, color: '#2f7d4f' }); }
     if (e.type === 'hit') { burst(e.x, e.y, Math.ceil(8 * e.lost * k), SHELL_COLORS, 260); popups.push({ x: e.x, y: e.y - 40, text: '−' + e.lost, life: 1, color: '#c22a3c' }); if (!calm) shake = 14; }
     if (e.type === 'miss') burst(e.x, e.y, Math.ceil(7 * k), ['#e7d3a0', '#d6bf86'], 110);
-    if (e.type === 'tier') burst(C.CASTLE_X, C.CASTLE_Y - 30, Math.ceil(40 * k), ['#fff6dc', '#f6e39b', '#f4a99a', '#9fd3c7'], 260);
-    if (e.type === 'won') burst(C.CASTLE_X, C.CASTLE_Y - 60, Math.ceil(90 * k), ['#e2553d', '#f6e39b', '#3aa6b9', '#fff6dc', '#c9a3d6'], 340);
+    if (e.type === 'tier') burst(goal.x, goal.y - 30, Math.ceil(40 * k), ['#fff6dc', '#f6e39b', '#f4a99a', '#9fd3c7'], 260);
+    if (e.type === 'won') burst(goal.x, goal.y - 60, Math.ceil(90 * k), ['#e2553d', '#f6e39b', '#3aa6b9', '#fff6dc', '#c9a3d6'], 340);
   }
 
   function shell(x, y, id, size = 9) {
@@ -690,48 +717,98 @@ function createRenderer(canvas) {
     g.stroke();
   }
 
-  // The castle, one tier at a time. A finished tier is solid sand, the tier in
-  // progress rises from the ground, and every tier still to come is a dashed
-  // plan, so the whole goal is drawn on the beach from the first second.
-  const TIER_SHAPES = [
-    () => { g.moveTo(-92, 44); g.lineTo(-74, 16); g.lineTo(74, 16); g.lineTo(92, 44); g.closePath(); },
-    () => { g.rect(-62, -14, 124, 30); for (let k = -3; k <= 3; k += 2) g.rect(k * 16 - 7, -24, 14, 10); },
-    () => { for (const sx of [-1, 1]) { g.rect(sx * 62 - 17, -52, 34, 68); g.rect(sx * 62 - 21, -62, 12, 10); g.rect(sx * 62 + 9, -62, 12, 10); } },
-    () => { g.rect(-26, -84, 52, 70); g.rect(-30, -94, 14, 10); g.rect(-7, -94, 14, 10); g.rect(16, -94, 14, 10); },
-    () => { g.rect(-2, -132, 4, 40); },
+  // The castle, one ring at a time and each ring one tier at a time. A finished
+  // tier is solid sand, the tier in progress rises from the ground, and every
+  // tier still to come is a dashed plan. Rings already built stand behind the
+  // one in progress, each drawn about its own spot on the beach.
+  const both = (f) => { f(-1); f(1); };
+  const berm = (a, b) => { g.moveTo(a, 44); g.lineTo(a + 16, 22); g.lineTo(b - 16, 22); g.lineTo(b, 44); g.closePath(); };
+  const merlons = (a, b, stepX, top) => { for (let x = a; x <= b; x += stepX) g.rect(x - 7, top, 14, 10); };
+  const RING_TIERS = [
+    [   // the keep
+      [() => { g.moveTo(-92, 44); g.lineTo(-74, 16); g.lineTo(74, 16); g.lineTo(92, 44); g.closePath(); }, 16, 44],
+      [() => { g.rect(-62, -14, 124, 30); for (let k = -3; k <= 3; k += 2) g.rect(k * 16 - 7, -24, 14, 10); }, -24, 16],
+      [() => { both((sx) => { g.rect(sx * 62 - 17, -52, 34, 68); g.rect(sx * 62 - 21, -62, 12, 10); g.rect(sx * 62 + 9, -62, 12, 10); }); }, -62, 16],
+      [() => { g.rect(-26, -84, 52, 70); g.rect(-30, -94, 14, 10); g.rect(-7, -94, 14, 10); g.rect(16, -94, 14, 10); }, -94, -14],
+      [() => { g.rect(-2, -132, 4, 40); }, -132, -92],
+    ],
+    [   // the curtain wall
+      [() => berm(-200, 200), 22, 44],
+      [() => g.rect(-176, -8, 352, 30), -8, 22],
+      [() => merlons(-165, 165, 30, -18), -18, -8],
+      [() => both((sx) => { g.rect(sx * 179 - 17, -40, 34, 62); g.rect(sx * 179 - 19, -50, 12, 10); g.rect(sx * 179 + 7, -50, 12, 10); }), -50, 22],
+      [() => { g.rect(-30, -30, 60, 52); merlons(-24, 24, 24, -40); }, -40, 22],
+    ],
+    [   // the towers
+      [() => both((sx) => berm(sx * 250 - 56, sx * 250 + 56)), 22, 44],
+      [() => both((sx) => g.rect(sx > 0 ? 176 : -276, -2, 100, 24)), -2, 22],
+      [() => both((sx) => g.rect(sx * 250 - 32, -70, 64, 92)), -70, 22],
+      [() => both((sx) => merlons(sx * 250 - 26, sx * 250 + 26, 26, -80)), -80, -70],
+      [() => both((sx) => { g.moveTo(sx * 250 - 32, -80); g.lineTo(sx * 250, -130); g.lineTo(sx * 250 + 32, -80); g.closePath(); }), -130, -80],
+    ],
+    [   // the second keep
+      [() => berm(-112, 112), 22, 44],
+      [() => g.rect(-90, -6, 180, 28), -6, 22],
+      [() => g.rect(-50, -70, 100, 64), -70, -6],
+      [() => merlons(-43, 43, 43, -80), -80, -70],
+      [() => { g.moveTo(-16, -80); g.lineTo(0, -122); g.lineTo(16, -80); g.closePath(); }, -122, -80],
+    ],
+    [   // the outer wall
+      [() => berm(-344, 344), 22, 44],
+      [() => g.rect(-322, -4, 644, 26), -4, 22],
+      [() => merlons(-310, 310, 31, -14), -14, -4],
+      [() => { g.rect(-62, -50, 40, 72); g.rect(22, -50, 40, 72); }, -50, 22],
+      [() => both((sx) => g.rect(sx * 326 - 20, -56, 40, 78)), -56, 22],
+    ],
   ];
-  const TIER_BOX = [[16, 44], [-24, 16], [-62, 16], [-94, -14], [-132, -92]];
-  function castle(s, time, calm) {
-    const done = tierOf(s.built), per = C.NEED / C.TIERS, part = (s.built - done * per) / per;
-    g.save(); g.translate(C.CASTLE_X, C.CASTLE_Y);
-    if (s.phase === 'lost') { g.translate(0, 30); g.scale(1.12, 0.38); }
-    // The ring where shells are handed over.
-    const pulse = s.carry > 0 && !calm ? 0.5 + 0.5 * Math.sin(time * 6) : 0.4;
-    g.setLineDash([10, 9]); g.lineWidth = 3; g.strokeStyle = `rgba(91,58,41,${0.25 + 0.4 * pulse})`;
-    g.beginPath(); g.ellipse(0, 12, C.CASTLE_R + 30, C.CASTLE_R + 4, 0, 0, 7); g.stroke();
-    for (let t = 0; t < C.TIERS; t++) {
+
+  function ring(r, done, part, fallen, plan) {
+    const tiers = RING_TIERS[r], at = ringPlace(r).goal;
+    g.save(); g.translate(at.x, at.y);
+    if (fallen) { g.translate(0, 30); g.scale(1.06, 0.38); }
+    for (let t = 0; t < tiers.length; t++) {
+      const [shape, top, bottom] = tiers[t];
       const solid = t < done ? 1 : t === done ? part : 0;
       if (solid > 0) {
         g.save();
-        const [top, bottom] = TIER_BOX[t];
-        g.beginPath(); g.rect(-120, bottom - (bottom - top) * solid, 240, (bottom - top) * solid + 1); g.clip();
-        g.setLineDash([]); g.beginPath(); TIER_SHAPES[t]();
-        g.fillStyle = s.phase === 'lost' ? '#b89f6a' : t % 2 ? '#e3c583' : '#d8b770'; g.fill();
+        g.beginPath(); g.rect(-400, bottom - (bottom - top) * solid, 800, (bottom - top) * solid + 1); g.clip();
+        g.setLineDash([]); g.beginPath(); shape();
+        g.fillStyle = fallen ? '#b89f6a' : t % 2 ? '#e3c583' : '#d8b770'; g.fill();
         g.strokeStyle = INK; g.lineWidth = 2; g.stroke();
         g.restore();
       }
-      if (solid < 1 && s.phase !== 'lost') {
+      if (solid < 1 && plan) {
         g.setLineDash([6, 6]); g.lineWidth = 1.6; g.strokeStyle = 'rgba(91,58,41,0.45)';
-        g.beginPath(); TIER_SHAPES[t](); g.stroke();
+        g.beginPath(); shape(); g.stroke();
       }
     }
     g.setLineDash([]);
-    if (done >= C.TIERS) {      // the flag flies only on a finished castle
+    g.restore();
+  }
+
+  function castle(s, time, calm) {
+    const done = tierOf(s.built), per = C.NEED / C.TIERS, part = (s.built - done * per) / per;
+    const lost = s.phase === 'lost';
+    for (let r = 0; r <= s.ring; r++) {
+      const current = r === s.ring;
+      // A lost run takes the ring in progress and knocks down the newest one standing.
+      ring(r, current ? done : C.TIERS, current ? part : 0, lost && (current || r === s.ring - 1), current && !lost);
+    }
+    const keepUp = s.ring > 0 ? !(lost && s.ring === 1) : done >= C.TIERS;
+    if (keepUp) {      // the flag flies on a finished keep
       const wave = calm ? 0 : Math.sin(time * 7) * 5;
+      g.save(); g.translate(C.CASTLE_X, C.CASTLE_Y);
       g.fillStyle = '#e2553d'; g.strokeStyle = INK; g.lineWidth = 1.5;
       g.beginPath(); g.moveTo(2, -131); g.quadraticCurveTo(18, -138 + wave, 34, -124); g.quadraticCurveTo(18, -116 - wave, 2, -113); g.closePath(); g.fill(); g.stroke();
+      g.restore();
     }
-    g.restore();
+    // The ring where shells are handed over, in front of the ring being built.
+    if (!lost) {
+      const pulse = s.carry > 0 && !calm ? 0.5 + 0.5 * Math.sin(time * 6) : 0.4;
+      g.setLineDash([10, 9]); g.lineWidth = 3; g.strokeStyle = `rgba(91,58,41,${0.25 + 0.4 * pulse})`;
+      g.beginPath(); g.ellipse(s.goal.x, s.goal.y + 12, C.CASTLE_R + 30, C.CASTLE_R + 4, 0, 0, 7); g.stroke();
+      g.setLineDash([]);
+    }
   }
 
   function crab(s, x, y, time, calm) {
@@ -798,6 +875,7 @@ function createRenderer(canvas) {
     g.setTransform(dpr * scale, 0, 0, dpr * scale, (view.ox + sx) * dpr, (view.oy + sy) * dpr);
     const L = -view.ox / scale - 30, R = C.W + view.ox / scale + 30, T = -view.oy / scale - 30, B = C.H + view.oy / scale + 30;
     const tide = tideAt(s);
+    goal = s.goal;
 
     // Sand, lighter and drier toward the dunes.
     const sand = g.createLinearGradient(0, 0, 0, C.H);
@@ -815,7 +893,7 @@ function createRenderer(canvas) {
     }
     // The line the tide will reach, marked the way a real beach marks it.
     g.strokeStyle = 'rgba(110,125,70,0.55)'; g.lineWidth = 4; g.setLineDash([14, 10, 5, 12]);
-    g.beginPath(); g.moveTo(L, C.CASTLE_FOOT + 6); g.lineTo(R, C.CASTLE_FOOT + 6); g.stroke(); g.setLineDash([]);
+    g.beginPath(); g.moveTo(L, s.foot + 6); g.lineTo(R, s.foot + 6); g.stroke(); g.setLineDash([]);
     g.fillStyle = 'rgba(150,120,70,0.16)'; g.fillRect(L, tide.line - 46, R - L, 46);     // wet sand
     g.fillStyle = 'rgba(70,50,30,0.07)'; g.fillRect(L, T, -L, B - T); g.fillRect(C.W, T, R - C.W, B - T);
 
@@ -839,7 +917,7 @@ function createRenderer(canvas) {
 
     // While the world waits, a trail shows the next thing to do.
     if (s.phase === 'wait' && opts.playing) {
-      const target = s.carry > 0 ? { x: C.CASTLE_X, y: C.CASTLE_Y + 40 } : s.shells.reduce((a, b) => (Math.hypot(b.x - cx, b.y - cy) < Math.hypot(a.x - cx, a.y - cy) ? b : a), s.shells[0]);
+      const target = s.carry > 0 ? { x: s.goal.x, y: s.goal.y + 40 } : s.shells.reduce((a, b) => (Math.hypot(b.x - cx, b.y - cy) < Math.hypot(a.x - cx, a.y - cy) ? b : a), s.shells[0]);
       if (target) {
         const dx = target.x - cx, dy = target.y - cy, d = Math.hypot(dx, dy) || 1, ang = Math.atan2(dy, dx);
         const slide = calm ? 0 : (time * 60) % 34;
@@ -921,16 +999,22 @@ const hold = createHold();
 const audio = createAudio({ muted: store.load('muted', false) });
 // Calm motion follows the system setting until the player chooses otherwise.
 let calm = store.load('calm', matchMedia('(prefers-reduced-motion: reduce)').matches);
-let best = store.load('best', null);          // most seconds to spare on a finished castle
 // Shells banked from past runs and the upgrades bought with them. Versioned,
 // so a later change to its shape starts clean instead of misreading it.
 const META_V = 1;
 let meta = store.load('meta', null);
 if (!meta || meta.v !== META_V) meta = { v: META_V, bank: 0, up: {} };
+// The castle itself: how many rings stand, how many whole castles are done,
+// and the most seconds to spare on each ring.
+meta.rings = Math.max(0, Math.min(RINGS.length, meta.rings | 0));
+meta.castles |= 0;
+if (!Array.isArray(meta.best)) meta.best = [];
 const saveMeta = () => store.save('meta', meta);
 let shopOpen = false;
 
-let world = createWorld(newSeed());
+const complete = () => meta.rings >= RINGS.length;
+const newWorld = () => createWorld(newSeed(), meta.up, complete() ? RINGS.length - 1 : meta.rings);
+let world = newWorld();
 let mode = 'title', endAt = 0, time = 0, freeze = 0;
 let crabScreen = { x: innerWidth / 2, y: innerHeight / 2 };
 
@@ -950,7 +1034,8 @@ function sound(e) {
 
 function begin() {
   // A new run is a new world, made before anything is shown.
-  world = createWorld(newSeed(), meta.up);
+  if (complete()) { meta.castles++; meta.rings = 0; saveMeta(); }   // a finished castle: start the next on bare sand
+  world = newWorld();
   renderer.clear();
   freeze = 0;
   mode = 'play';
@@ -960,6 +1045,7 @@ function begin() {
 
 function hud() {
   $('count').textContent = `${world.built} / ${C.NEED}`;
+  $('ringname').textContent = complete() ? 'Castle complete' : `Ring ${world.ring + 1} of ${RINGS.length}: ${RINGS[world.ring].name}`;
   const u = tideAt(world).u;
   $('tide').style.width = `${Math.round(u * 100)}%`;
   $('bar').classList.toggle('close', u > 0.75 && world.phase === 'play');
@@ -971,11 +1057,21 @@ function banner(text) {
   b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
 }
 
+function titleCard() {
+  const n = meta.rings;
+  $('title').textContent = 'Crab Castle';
+  $('line').textContent = complete()
+    ? `Your castle is complete, all ${RINGS.length} rings of it. Build the next one from bare sand.`
+    : n === 0
+      ? 'Carry shells up the beach and finish the keep before the tide reaches it. The more you carry, the more the gulls want it.'
+      : `${n} ring${n > 1 ? 's' : ''} of your castle still stand${n > 1 ? '' : 's'}. Next is ${RINGS[n].name}, lower on the beach, where the tide comes sooner. Lose and the tide knocks down your newest ring.`;
+}
+
 function finish(title, line) {
   mode = 'end'; endAt = performance.now();
   // Every shell that reached the castle is banked, win or lose.
   meta.bank += world.built; saveMeta();
-  line += ` ${world.built} shells banked for the shop.`;
+  line += ` ${world.built} shell${world.built === 1 ? '' : 's'} banked for the shop.`;
   $('banner').classList.remove('show');
   $('title').textContent = title;
   $('line').textContent = line;
@@ -1009,12 +1105,16 @@ function tick() {
     else if (e.type === 'tide') banner('The tide is coming in');
     else if (e.type === 'tier') banner(e.tier === 1 ? 'Here come the gulls' : e.tier === C.TIERS - 1 ? 'One tier to go' : 'The gulls scatter');
     else if (e.type === 'won') {
-      const spare = Math.floor(e.spare * C.TICK);
-      const beaten = best === null || spare > best;
-      if (beaten) { best = spare; store.save('best', best); }
-      finish('The castle stands', `Finished with ${spare} seconds to spare.${beaten ? ' Your best yet.' : ` Your best is ${best}.`}`);
+      const spare = Math.floor(e.spare * C.TICK), r = world.ring, best = meta.best[r];
+      const beaten = best == null || spare > best;
+      if (beaten) meta.best[r] = spare;
+      meta.rings = r + 1;
+      finish(complete() ? 'The castle is complete' : RINGS[r].stands,
+        `Finished with ${spare} seconds to spare.${beaten ? ' Your best on this ring yet.' : ` Your best here is ${best}.`}${complete() ? '' : ` Next is ${RINGS[r + 1].name}, lower down the beach.`}`);
     } else if (e.type === 'lost') {
-      finish('The tide took it', `${e.built} of ${C.NEED} shells were in place.${best === null ? '' : ` Your best finish had ${best} seconds to spare.`}`);
+      const r = world.ring, fell = r > 0 ? RINGS[r - 1].name : null;
+      meta.rings = Math.max(0, r - 1);
+      finish('The tide took it', `${e.built} of ${C.NEED} shells of ${RINGS[r].name} were in place.${fell ? ` The sea knocked down ${fell} as well.` : ''}`);
     }
   }
   hud();
@@ -1059,7 +1159,7 @@ function labels() {
 }
 $('sound').addEventListener('click', (e) => { audio.unlock(); toggleSound(); e.currentTarget.blur(); });
 $('motion').addEventListener('click', (e) => { calm = !calm; store.save('calm', calm); labels(); e.currentTarget.blur(); });
-labels(); hud();
+labels(); titleCard(); hud();
 
 // The shop: open from the title or end card, never during a run.
 function renderShop() {

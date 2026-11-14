@@ -34,6 +34,11 @@ builds the castle faster, but slows the crab, makes it a bigger target, brings
 the gulls down sooner, and is lost with the rest if a gull connects. Gulls only
 trouble a crab that is carrying, and they scatter each time a tier is finished.
 
+The castle outlasts a run. A finished ring stays standing, and the next run
+adds another (the keep, a curtain wall, towers, a second keep, an outer wall),
+each lower on the beach so the tide reaches it sooner. Lose and the tide takes
+the ring in progress and knocks down the newest one standing.
+
     npm run serve        # then open /crab/ at the address it prints
     npm run tournament   # every habit of play over the same seeds
 

@@ -18,7 +18,28 @@ export const C = {
   ORBIT: 170, ORBIT_FAR: 330, GULL_SPEED: 260,
   WIND: 48, DIVE_SPEED: 430, HIT_R: 18, HIT_PER_SHELL: 6,
   COOL: 270, COOL_PER_SHELL: 0.5, REST: 480,
+  RING_DROP: 70,
 };
+
+// The castle outlasts a run. Each finished ring stays standing for the next,
+// and each new ring sits lower on the beach, so the tide reaches it sooner and
+// the same crab has less time. Losing a run knocks down the newest ring.
+export const RINGS = [
+  { name: 'the keep', stands: 'The keep stands' },
+  { name: 'the curtain wall', stands: 'The curtain wall stands' },
+  { name: 'the towers', stands: 'The towers stand' },
+  { name: 'the second keep', stands: 'The second keep stands' },
+  { name: 'the outer wall', stands: 'The outer wall stands' },
+];
+export function ringPlace(ring) {
+  const foot = C.CASTLE_FOOT + ring * C.RING_DROP;
+  return {
+    goal: { x: C.CASTLE_X, y: C.CASTLE_Y + ring * C.RING_DROP },
+    foot,
+    // The sea comes in at the same pace, so a lower ring is reached sooner.
+    tideTicks: Math.round(C.TIDE_TICKS * (C.TIDE_START - foot) / (C.TIDE_START - C.CASTLE_FOOT)),
+  };
+}
 const ROT_C = 0.9998000066665778, ROT_S = 0.01999866669333308;   // cos and sin of 0.02 rad
 
 // Upgrades bought between runs with banked shells. Each one eases a single job
@@ -44,17 +65,21 @@ export function crabStats(up = {}) {
   };
 }
 
-export function createWorld(seed, upgrades = {}) {
+export function createWorld(seed, upgrades = {}, ring = 0) {
+  ring = Math.max(0, Math.min(RINGS.length - 1, ring | 0));
+  const at = ringPlace(ring), gy = at.goal.y;
   const s = {
+    ring, goal: at.goal, foot: at.foot, tideTicks: at.tideTicks,
     seed: String(seed), tick: 0, phase: 'wait', startTick: 0, endTick: 0,
     rng: { wash: makeStream(seed, 'wash'), gulls: makeStream(seed, 'gulls') },
-    crab: { x: C.CASTLE_X, y: 330, px: C.CASTLE_X, py: 330, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
+    crab: { x: C.CASTLE_X, y: gy + 200, px: C.CASTLE_X, py: gy + 200, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
     k: crabStats(upgrades), carry: 0, built: 0, shells: [], gulls: [], rest: 0, nextId: 1, events: [],
   };
   // The first shell lies between the crab and the plain way down the beach;
   // nothing else moves until it has been carried home.
-  s.shells.push({ id: s.nextId++, x: C.CASTLE_X, y: 450, wait: 0 });
-  for (let i = 0; i < 5; i++) s.shells.push({ id: s.nextId++, x: 60 + next(s.rng.wash) * (C.W - 120), y: 600 + next(s.rng.wash) * 250, wait: 0 });
+  s.shells.push({ id: s.nextId++, x: C.CASTLE_X, y: gy + 320, wait: 0 });
+  const lo = Math.max(600, at.foot + 200);
+  for (let i = 0; i < 5; i++) s.shells.push({ id: s.nextId++, x: 60 + next(s.rng.wash) * (C.W - 120), y: lo + next(s.rng.wash) * (850 - lo), wait: 0 });
   return s;
 }
 
@@ -63,8 +88,8 @@ export function createWorld(seed, upgrades = {}) {
 export function tideAt(s, tick = s.tick) {
   if (s.phase === 'wait') return { calm: C.TIDE_START, line: C.TIDE_START, u: 0 };
   const end = s.phase === 'play' ? tick : s.endTick;
-  const u = Math.min(1, (end - s.startTick) / C.TIDE_TICKS);
-  const calm = C.TIDE_START - (C.TIDE_START - C.CASTLE_FOOT) * u;
+  const foot = s.foot ?? C.CASTLE_FOOT, u = Math.min(1, (end - s.startTick) / (s.tideTicks ?? C.TIDE_TICKS));
+  const calm = C.TIDE_START - (C.TIDE_START - foot) * u;
   const w = ((tick - s.startTick) % C.WAVE_TICKS) / C.WAVE_TICKS;
   const tri = w < 0.5 ? 1 - 4 * w : 4 * w - 3;                    // 1 at the crest, -1 at the ebb
   return { calm, line: calm - tri * C.WAVE_AMP, u };
@@ -77,7 +102,7 @@ export const speedWith = (carry, wet, k = crabStats()) => C.CRAB_MAX * (1 - k.lo
 function washUp(s, calm) {
   for (let i = 0; i < C.SHELLS_PER_WAVE && s.shells.length < C.SHELLS_ON_BEACH; i++) {
     const x = 40 + next(s.rng.wash) * (C.W - 80);
-    const y = Math.max(C.CASTLE_FOOT + 40, calm - 15 - next(s.rng.wash) * 95);
+    const y = Math.max(s.foot + 40, calm - 15 - next(s.rng.wash) * 95);
     s.shells.push({ id: s.nextId++, x, y, wait: 0 });
   }
 }
@@ -139,7 +164,7 @@ export function step(s, input) {
       }
     }
   }
-  if (s.carry > 0 && Math.hypot(c.x - C.CASTLE_X, c.y - C.CASTLE_Y) < C.CASTLE_R + C.CRAB_R) {
+  if (s.carry > 0 && Math.hypot(c.x - s.goal.x, c.y - s.goal.y) < C.CASTLE_R + C.CRAB_R) {
     const before = tierOf(s.built);
     s.built = Math.min(C.NEED, s.built + s.carry);
     s.events.push({ type: 'build', n: s.carry, built: s.built });
@@ -147,7 +172,7 @@ export function step(s, input) {
     if (s.phase === 'wait') { s.phase = 'play'; s.startTick = s.tick; s.events.push({ type: 'tide' }); }
     if (s.built >= C.NEED) {
       s.phase = 'won'; s.endTick = s.tick;
-      s.events.push({ type: 'won', spare: C.TIDE_TICKS - (s.tick - s.startTick) });
+      s.events.push({ type: 'won', spare: s.tideTicks - (s.tick - s.startTick) });
       return s;
     }
     if (tierOf(s.built) > before) {
