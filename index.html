@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Glowmoth</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05080f; overflow: hidden; color: #f3ead2;
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-user-select: none; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+  #hud { position: fixed; inset: 0; pointer-events: none; padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left)); }
+  #stats { position: absolute; left: max(14px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top)); font-weight: 600; text-shadow: 0 1px 4px #000; }
+  #stats span { display: block; }
+  #best { opacity: .65; font-weight: 400; font-size: 14px; }
+  #bar { position: absolute; left: 50%; top: max(16px, env(safe-area-inset-top)); transform: translateX(-50%); width: min(38vw, 300px); height: 12px;
+    border-radius: 8px; background: rgba(255,255,255,.12); box-shadow: 0 0 0 1px rgba(255,255,255,.18); overflow: hidden; }
+  @media (max-width: 560px) { #bar { left: max(14px, env(safe-area-inset-left)); top: calc(max(12px, env(safe-area-inset-top)) + 52px); transform: none; width: 42vw; } }
+  #glow { height: 100%; width: 100%; border-radius: 8px; background: linear-gradient(90deg, #ffb347, #ffe9a3); }
+  #glow.low { background: #ff6a5a; }
+  #buttons { position: absolute; right: max(14px, env(safe-area-inset-right)); top: max(10px, env(safe-area-inset-top)); display: flex; flex-direction: column; gap: 6px; pointer-events: auto; }
+  button { font: inherit; font-size: 13px; color: #f3ead2; background: rgba(10,16,30,.6); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; padding: 6px 10px; min-height: 34px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #ffd76a; }
+  #banner { position: absolute; left: 0; right: 0; top: 22%; text-align: center; font-size: clamp(20px, 4vw, 34px); font-weight: 700; letter-spacing: .04em;
+    text-shadow: 0 2px 10px #000; opacity: 0; }
+  #banner.show { animation: rise 2.2s ease-out; }
+  @keyframes rise { 0% { opacity: 0; transform: translateY(10px); } 15% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { #banner.show { animation-name: fade; } @keyframes fade { 0%, 100% { opacity: 0; } 15%, 70% { opacity: 1; } } }
+  #overlay { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(5,8,15,.35), rgba(5,8,15,.82)); }
+  #overlay[hidden] { display: none; }
+  #overlay h1 { margin: 0 0 10px; font-size: clamp(34px, 8vw, 64px); color: #ffe2a0; text-shadow: 0 0 28px rgba(255,190,90,.55); }
+  #overlay p { margin: 6px auto; max-width: 30em; text-wrap: balance; }
+  #hint { margin-top: 18px !important; font-weight: 600; color: #ffd76a; }
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Glowmoth game"></canvas>
+<div id="hud">
+  <div id="stats"><span id="score">Pollen 0</span><span id="best">Best 0</span></div>
+  <div id="bar" role="img" aria-label="Light remaining"><div id="glow"></div></div>
+  <div id="buttons"><button id="sound" type="button">Sound on</button><button id="motion" type="button">Motion full</button></div>
+  <div id="banner" aria-live="polite"></div>
+</div>
+<div id="overlay">
+  <div>
+    <h1 id="title">Glowmoth</h1>
+    <p id="line">Your light is burning down. Gather the glowing pollen to keep it, and stay clear of the bats that hunt it.</p>
+    <p id="hint">Hold the mouse, drag a thumb, or use the arrow keys</p>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
