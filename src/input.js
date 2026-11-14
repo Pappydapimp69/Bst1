@@ -27,10 +27,13 @@ const STICK = 56;    // CSS px of thumb travel for full thrust
 const REACH = 90;    // CSS px from the moth for full thrust with a mouse
 const DEAD = 0.2;    // stick travel ignored round the centre, so a worn stick does not drift
 
-export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
+export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch, touchPath = false }) {
   const down = new Set();
   let pointer = null;   // { id, touch, ox, oy, x, y }
   let touch = false;
+  // Path mode (touch only): a tap or a drawn line, in screen points, that the
+  // game walks along. Nothing is held, so the hand is free to lift away.
+  let path = [];
 
   const keysVector = () => {
     let x = 0, y = 0;
@@ -39,6 +42,7 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
   };
   const pointerVector = () => {
     if (!pointer) return;
+    if (pointer.touch && touchPath) return;
     if (pointer.touch) {
       // A floating stick: drag from where the thumb landed, so the hand never
       // has to cover the moth.
@@ -64,6 +68,7 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
     if (isTouch && !touch) { touch = true; onTouch(); }
     if (pointer && pointer.id !== e.pointerId) return;
     pointer = { id: e.pointerId, touch: isTouch, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
+    if (isTouch && touchPath) path = [{ x: e.clientX, y: e.clientY }];   // a new touch replaces the old path
     try { target.setPointerCapture(e.pointerId); } catch {}
     onGesture(isTouch ? 'touch' : 'mouse');
     pointerVector();
@@ -72,6 +77,10 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
   target.addEventListener('pointermove', (e) => {
     if (!pointer || pointer.id !== e.pointerId) return;
     pointer.x = e.clientX; pointer.y = e.clientY;
+    if (pointer.touch && touchPath) {
+      const last = path[path.length - 1];
+      if (!last || Math.hypot(e.clientX - last.x, e.clientY - last.y) > 10) path.push({ x: e.clientX, y: e.clientY });
+    }
     pointerVector();
   });
   const up = (e) => {
@@ -117,8 +126,10 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
 
   return {
     refresh: pointerVector,   // the moth moves under a still mouse
+    get path() { return path; },
+    clearPath() { path = []; },
     pollPad,
-    get stick() { return pointer && pointer.touch ? pointer : null; },
+    get stick() { return pointer && pointer.touch && !touchPath ? pointer : null; },
     get touch() { return touch; },
   };
 }

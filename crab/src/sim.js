@@ -16,7 +16,7 @@ export const C = {
   SHELLS_PER_WAVE: 3, SHELLS_ON_BEACH: 12, SWEPT_DEPTH: 70,
   GULLS: [0, 1, 2, 2, 3],
   ORBIT: 170, ORBIT_FAR: 330, GULL_SPEED: 260,
-  WIND: 48, DIVE_SPEED: 430, LEAD: 0.25, HIT_R: 18, HIT_PER_SHELL: 6,
+  WIND: 48, DIVE_SPEED: 430, HIT_R: 18, HIT_PER_SHELL: 6,
   COOL: 270, COOL_PER_SHELL: 0.5, REST: 480,
 };
 const ROT_C = 0.9998000066665778, ROT_S = 0.01999866669333308;   // cos and sin of 0.02 rad
@@ -154,16 +154,17 @@ export function step(s, input) {
       toward(g, c.x + g.ux * r, c.y + g.uy * r, C.GULL_SPEED, dt);
       if (g.cool > 0) g.cool -= 1 + C.COOL_PER_SHELL * s.carry;
       if (g.cool <= 0 && s.carry > 0 && s.rest === 0 && c.stun === 0) {
-        g.state = 'wind'; g.t = C.WIND; g.ax = c.x; g.ay = c.y;
+        // The gull picks its spot the moment it chooses the crab, and the crab
+        // stops dead: the ring is locked there and shrinks, so the player has the
+        // whole wind-up to get out of it.
+        g.state = 'wind'; g.t = C.WIND; g.ax = c.x; g.ay = c.y; c.vx = 0; c.vy = 0;
         s.events.push({ type: 'wind', id: g.id });
       }
     } else if (g.state === 'wind') {
-      // The warning: a counted wind-up in which the gull cannot strike. Its
-      // mark follows the crab, and it commits to a point only at the end.
+      // The warning: a counted wind-up in which the gull cannot strike, aimed
+      // at the spot locked when it began.
       if (s.carry === 0) { g.state = 'circle'; g.cool = C.COOL * 0.3; continue; }
-      g.ax = c.x; g.ay = c.y;
       if (--g.t <= 0) {
-        g.ax = c.x + c.vx * C.LEAD; g.ay = c.y + c.vy * C.LEAD;
         g.state = 'dive';
         s.events.push({ type: 'dive', id: g.id });
       }

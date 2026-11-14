@@ -213,12 +213,20 @@ export function createRenderer(canvas) {
       }
     }
 
-    // Where a gull will strike: the ring closes while it winds up, following
-    // the crab, then locks to one spot when it commits.
+    // A touch path: the way the crab will walk, ending in a ring.
+    if (opts.path && opts.path.length && opts.playing) {
+      g.strokeStyle = 'rgba(91,58,41,0.5)'; g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round'; g.setLineDash([2, 10]);
+      g.beginPath(); g.moveTo(cx, cy); for (const p of opts.path) g.lineTo(p.x, p.y); g.stroke(); g.setLineDash([]);
+      const end = opts.path[opts.path.length - 1];
+      g.lineWidth = 3; g.beginPath(); g.arc(end.x, end.y, 11, 0, 7); g.stroke();
+    }
+
+    // Where a gull will strike: locked on the spot where it chose the crab,
+    // the ring closes over the wind-up and the gull lands when it shuts.
     for (const gl of s.gulls) {
       if (gl.state !== 'wind' && gl.state !== 'dive') continue;
       const r = hitRadius(s.carry || 1), locked = gl.state === 'dive';
-      const tx = locked ? gl.ax : cx, ty = locked ? gl.ay : cy;
+      const tx = gl.ax, ty = gl.ay;
       g.fillStyle = locked ? 'rgba(194,42,60,0.3)' : 'rgba(194,42,60,0.12)';
       g.beginPath(); g.arc(tx, ty, r, 0, 7); g.fill();
       g.strokeStyle = '#c22a3c'; g.lineWidth = locked ? 4 : 3;

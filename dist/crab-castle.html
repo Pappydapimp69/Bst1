@@ -103,7 +103,7 @@ const C = {
   SHELLS_PER_WAVE: 3, SHELLS_ON_BEACH: 12, SWEPT_DEPTH: 70,
   GULLS: [0, 1, 2, 2, 3],
   ORBIT: 170, ORBIT_FAR: 330, GULL_SPEED: 260,
-  WIND: 48, DIVE_SPEED: 430, LEAD: 0.25, HIT_R: 18, HIT_PER_SHELL: 6,
+  WIND: 48, DIVE_SPEED: 430, HIT_R: 18, HIT_PER_SHELL: 6,
   COOL: 270, COOL_PER_SHELL: 0.5, REST: 480,
 };
 const ROT_C = 0.9998000066665778, ROT_S = 0.01999866669333308;   // cos and sin of 0.02 rad
@@ -241,16 +241,17 @@ function step(s, input) {
       toward(g, c.x + g.ux * r, c.y + g.uy * r, C.GULL_SPEED, dt);
       if (g.cool > 0) g.cool -= 1 + C.COOL_PER_SHELL * s.carry;
       if (g.cool <= 0 && s.carry > 0 && s.rest === 0 && c.stun === 0) {
-        g.state = 'wind'; g.t = C.WIND; g.ax = c.x; g.ay = c.y;
+        // The gull picks its spot the moment it chooses the crab, and the crab
+        // stops dead: the ring is locked there and shrinks, so the player has the
+        // whole wind-up to get out of it.
+        g.state = 'wind'; g.t = C.WIND; g.ax = c.x; g.ay = c.y; c.vx = 0; c.vy = 0;
         s.events.push({ type: 'wind', id: g.id });
       }
     } else if (g.state === 'wind') {
-      // The warning: a counted wind-up in which the gull cannot strike. Its
-      // mark follows the crab, and it commits to a point only at the end.
+      // The warning: a counted wind-up in which the gull cannot strike, aimed
+      // at the spot locked when it began.
       if (s.carry === 0) { g.state = 'circle'; g.cool = C.COOL * 0.3; continue; }
-      g.ax = c.x; g.ay = c.y;
       if (--g.t <= 0) {
-        g.ax = c.x + c.vx * C.LEAD; g.ay = c.y + c.vy * C.LEAD;
         g.state = 'dive';
         s.events.push({ type: 'dive', id: g.id });
       }
@@ -389,10 +390,13 @@ const STICK = 56;    // CSS px of thumb travel for full thrust
 const REACH = 90;    // CSS px from the moth for full thrust with a mouse
 const DEAD = 0.2;    // stick travel ignored round the centre, so a worn stick does not drift
 
-function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
+function bindInput(target, hold, { mothOnScreen, onGesture, onTouch, touchPath = false }) {
   const down = new Set();
   let pointer = null;   // { id, touch, ox, oy, x, y }
   let touch = false;
+  // Path mode (touch only): a tap or a drawn line, in screen points, that the
+  // game walks along. Nothing is held, so the hand is free to lift away.
+  let path = [];
 
   const keysVector = () => {
     let x = 0, y = 0;
@@ -401,6 +405,7 @@ function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
   };
   const pointerVector = () => {
     if (!pointer) return;
+    if (pointer.touch && touchPath) return;
     if (pointer.touch) {
       // A floating stick: drag from where the thumb landed, so the hand never
       // has to cover the moth.
@@ -426,6 +431,7 @@ function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
     if (isTouch && !touch) { touch = true; onTouch(); }
     if (pointer && pointer.id !== e.pointerId) return;
     pointer = { id: e.pointerId, touch: isTouch, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
+    if (isTouch && touchPath) path = [{ x: e.clientX, y: e.clientY }];   // a new touch replaces the old path
     try { target.setPointerCapture(e.pointerId); } catch {}
     onGesture(isTouch ? 'touch' : 'mouse');
     pointerVector();
@@ -434,6 +440,10 @@ function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
   target.addEventListener('pointermove', (e) => {
     if (!pointer || pointer.id !== e.pointerId) return;
     pointer.x = e.clientX; pointer.y = e.clientY;
+    if (pointer.touch && touchPath) {
+      const last = path[path.length - 1];
+      if (!last || Math.hypot(e.clientX - last.x, e.clientY - last.y) > 10) path.push({ x: e.clientX, y: e.clientY });
+    }
     pointerVector();
   });
   const up = (e) => {
@@ -479,8 +489,10 @@ function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
 
   return {
     refresh: pointerVector,   // the moth moves under a still mouse
+    get path() { return path; },
+    clearPath() { path = []; },
     pollPad,
-    get stick() { return pointer && pointer.touch ? pointer : null; },
+    get stick() { return pointer && pointer.touch && !touchPath ? pointer : null; },
     get touch() { return touch; },
   };
 }
@@ -791,12 +803,20 @@ function createRenderer(canvas) {
       }
     }
 
-    // Where a gull will strike: the ring closes while it winds up, following
-    // the crab, then locks to one spot when it commits.
+    // A touch path: the way the crab will walk, ending in a ring.
+    if (opts.path && opts.path.length && opts.playing) {
+      g.strokeStyle = 'rgba(91,58,41,0.5)'; g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round'; g.setLineDash([2, 10]);
+      g.beginPath(); g.moveTo(cx, cy); for (const p of opts.path) g.lineTo(p.x, p.y); g.stroke(); g.setLineDash([]);
+      const end = opts.path[opts.path.length - 1];
+      g.lineWidth = 3; g.beginPath(); g.arc(end.x, end.y, 11, 0, 7); g.stroke();
+    }
+
+    // Where a gull will strike: locked on the spot where it chose the crab,
+    // the ring closes over the wind-up and the gull lands when it shuts.
     for (const gl of s.gulls) {
       if (gl.state !== 'wind' && gl.state !== 'dive') continue;
       const r = hitRadius(s.carry || 1), locked = gl.state === 'dive';
-      const tx = locked ? gl.ax : cx, ty = locked ? gl.ay : cy;
+      const tx = gl.ax, ty = gl.ay;
       g.fillStyle = locked ? 'rgba(194,42,60,0.3)' : 'rgba(194,42,60,0.12)';
       g.beginPath(); g.arc(tx, ty, r, 0, 7); g.fill();
       g.strokeStyle = '#c22a3c'; g.lineWidth = locked ? 4 : 3;
@@ -904,14 +924,29 @@ function finish(title, line) {
   $('overlay').hidden = false;
 }
 
+// The touch path, from screen points to beach coordinates.
+const toWorld = (p) => { const v = renderer.view; return { x: (p.x - v.ox) / v.scale, y: (p.y - v.oy) / v.scale }; };
+function followPath() {
+  const path = input.path, c = world.crab;
+  while (path.length) {
+    const w = toWorld(path[0]), dx = w.x - c.x, dy = w.y - c.y, d = Math.hypot(dx, dy);
+    if (d < 8) { path.shift(); continue; }
+    hold.set('touch', dx / d, dy / d);
+    return;
+  }
+  hold.release('touch');
+}
+
 function tick() {
   if (mode !== 'play') return;
   input.refresh();
+  followPath();
   step(world, hold.vector());
   for (const e of world.events) {
     renderer.onEvent(e, calm);
     sound(e);
     if (e.type === 'hit' && !calm) freeze = 0.09;      // a held frame; the simulation never pauses
+    else if (e.type === 'wind') { input.clearPath(); hold.release('touch'); }   // the crab stops: get out of the ring
     else if (e.type === 'tide') banner('The tide is coming in');
     else if (e.type === 'tier') banner(e.tier === 1 ? 'Here come the gulls' : e.tier === C.TIERS - 1 ? 'One tier to go' : 'The gulls scatter');
     else if (e.type === 'won') {
@@ -933,7 +968,7 @@ const loop = createLoop({
     input.pollPad();
     if (freeze > 0) { freeze -= frameDt; return; }
     time += frameDt;
-    crabScreen = renderer.draw(world, mode === 'play' ? alpha : 1, time, frameDt, { calm, stick: input.stick, playing: mode === 'play' });
+    crabScreen = renderer.draw(world, mode === 'play' ? alpha : 1, time, frameDt, { calm, stick: input.stick, playing: mode === 'play', path: input.path.map(toWorld) });
   },
 });
 
@@ -945,8 +980,9 @@ const input = bindInput(canvas, hold, {
     if (mode === 'title') begin();
     else if (mode === 'end' && performance.now() - endAt > 700) begin();
   },
+  touchPath: true,
   onTouch() {
-    if (mode === 'title') $('hint').textContent = 'Drag anywhere to walk';
+    if (mode === 'title') $('hint').textContent = 'Tap where to go, or draw the way';
   },
 });
 

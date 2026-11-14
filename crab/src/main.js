@@ -69,14 +69,29 @@ function finish(title, line) {
   $('overlay').hidden = false;
 }
 
+// The touch path, from screen points to beach coordinates.
+const toWorld = (p) => { const v = renderer.view; return { x: (p.x - v.ox) / v.scale, y: (p.y - v.oy) / v.scale }; };
+function followPath() {
+  const path = input.path, c = world.crab;
+  while (path.length) {
+    const w = toWorld(path[0]), dx = w.x - c.x, dy = w.y - c.y, d = Math.hypot(dx, dy);
+    if (d < 8) { path.shift(); continue; }
+    hold.set('touch', dx / d, dy / d);
+    return;
+  }
+  hold.release('touch');
+}
+
 function tick() {
   if (mode !== 'play') return;
   input.refresh();
+  followPath();
   step(world, hold.vector());
   for (const e of world.events) {
     renderer.onEvent(e, calm);
     sound(e);
     if (e.type === 'hit' && !calm) freeze = 0.09;      // a held frame; the simulation never pauses
+    else if (e.type === 'wind') { input.clearPath(); hold.release('touch'); }   // the crab stops: get out of the ring
     else if (e.type === 'tide') banner('The tide is coming in');
     else if (e.type === 'tier') banner(e.tier === 1 ? 'Here come the gulls' : e.tier === C.TIERS - 1 ? 'One tier to go' : 'The gulls scatter');
     else if (e.type === 'won') {
@@ -98,7 +113,7 @@ const loop = createLoop({
     input.pollPad();
     if (freeze > 0) { freeze -= frameDt; return; }
     time += frameDt;
-    crabScreen = renderer.draw(world, mode === 'play' ? alpha : 1, time, frameDt, { calm, stick: input.stick, playing: mode === 'play' });
+    crabScreen = renderer.draw(world, mode === 'play' ? alpha : 1, time, frameDt, { calm, stick: input.stick, playing: mode === 'play', path: input.path.map(toWorld) });
   },
 });
 
@@ -110,8 +125,9 @@ const input = bindInput(canvas, hold, {
     if (mode === 'title') begin();
     else if (mode === 'end' && performance.now() - endAt > 700) begin();
   },
+  touchPath: true,
   onTouch() {
-    if (mode === 'title') $('hint').textContent = 'Drag anywhere to walk';
+    if (mode === 'title') $('hint').textContent = 'Tap where to go, or draw the way';
   },
 });
 
