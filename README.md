@@ -39,6 +39,16 @@ adds another (the keep, a curtain wall, towers, a second keep, an outer wall),
 each lower on the beach so the tide reaches it sooner. Lose and the tide takes
 the ring in progress and knocks down the newest one standing.
 
+The crab lives in a home shell. Once a run a bigger empty one washes up with a
+line of crabs waiting behind it: reach it with empty claws and you move up, each
+crab in line takes the shell left by the one ahead, and the line joins your
+castle as its garrison. Gulls sometimes raid the castle while you are far from
+it; a guard takes as many pecks as its shell is big before it is stunned, then
+the thief steals from the tier being built until you chase it off. A stinging
+anemone, found now and then near the water, takes a place in your load and arms
+a guard, and a gull that pecks an armed guard is stung off the beach for a
+while. Lose a run and the crabs living in the ring that falls are lost with it.
+
     npm run serve        # then open /crab/ at the address it prints
     npm run tournament   # every habit of play over the same seeds
 

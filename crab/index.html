@@ -15,6 +15,7 @@
   #stats { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: max(12px, env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 6px; }
   #count { font: 800 22px/1 var(--display); background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px 4px; align-self: flex-start; font-variant-numeric: tabular-nums; }
   #ringname { font: 700 13px/1 var(--body); text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 3px var(--paper); }
+  #garrison { font: 700 13px/1 var(--body); text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 3px var(--paper); }
   #tiderow { display: flex; align-items: center; gap: 6px; }
   #tidelabel { font: 700 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper); }
   #bar { width: min(34vw, 200px); height: 12px; border-radius: 8px; background: var(--paper); border: 2px solid var(--ink); overflow: hidden; }
@@ -60,7 +61,7 @@
 <body>
 <canvas id="game" aria-label="Crab Castle game"></canvas>
 <div id="hud">
-  <div id="stats"><span id="ringname"></span><span id="count" aria-label="Shells in this ring">0 / 50</span><div id="tiderow"><span id="tidelabel">Tide</span><div id="bar" role="img" aria-label="How far the tide has come"><div id="tide"></div></div></div></div>
+  <div id="stats"><span id="ringname"></span><span id="garrison"></span><span id="count" aria-label="Shells in this ring">0 / 50</span><div id="tiderow"><span id="tidelabel">Tide</span><div id="bar" role="img" aria-label="How far the tide has come"><div id="tide"></div></div></div></div>
   <div id="buttons"><button id="sound" type="button">Sound on</button><button id="motion" type="button">Motion full</button></div>
   <div id="banner" aria-live="polite"></div>
 </div>

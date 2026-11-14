@@ -11,6 +11,7 @@
   #stats { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: max(12px, env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 6px; }
   #count { font: 800 22px/1 var(--display); background: var(--paper); border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px 4px; align-self: flex-start; font-variant-numeric: tabular-nums; }
   #ringname { font: 700 13px/1 var(--body); text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 3px var(--paper); }
+  #garrison { font: 700 13px/1 var(--body); text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 3px var(--paper); }
   #tiderow { display: flex; align-items: center; gap: 6px; }
   #tidelabel { font: 700 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper); }
   #bar { width: min(34vw, 200px); height: 12px; border-radius: 8px; background: var(--paper); border: 2px solid var(--ink); overflow: hidden; }
@@ -54,7 +55,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@800&family=Nunito:wght@400;600;700&display=swap">
 <canvas id="game" aria-label="Crab Castle game"></canvas>
 <div id="hud">
-  <div id="stats"><span id="ringname"></span><span id="count" aria-label="Shells in this ring">0 / 50</span><div id="tiderow"><span id="tidelabel">Tide</span><div id="bar" role="img" aria-label="How far the tide has come"><div id="tide"></div></div></div></div>
+  <div id="stats"><span id="ringname"></span><span id="garrison"></span><span id="count" aria-label="Shells in this ring">0 / 50</span><div id="tiderow"><span id="tidelabel">Tide</span><div id="bar" role="img" aria-label="How far the tide has come"><div id="tide"></div></div></div></div>
   <div id="buttons"><button id="sound" type="button">Sound on</button><button id="motion" type="button">Motion full</button></div>
   <div id="banner" aria-live="polite"></div>
 </div>
@@ -133,6 +134,21 @@ const C = {
   WIND: 48, DIVE_SPEED: 300, GAP: 150, HIT_R: 18, HIT_PER_SHELL: 6,
   COOL: 270, COOL_PER_SHELL: 0.5, REST: 480,
   RING_DROP: 70,
+  // The crab's home shell: each size up carries one more but is slower and
+  // a bigger target.
+  SHELL_MAX: 4, SHELL_SLOW: 0.04, SHELL_HIT: 3,
+  // A bigger empty shell washes up once a run, with a line of crabs waiting
+  // behind it; reach it with empty claws before the first of them gives up.
+  VAC_TICKS: 720, LINE: 2,
+  // The garrison: crabs who joined the castle. A guard takes as many pecks as
+  // its shell is big, then is stunned until it recovers.
+  GUARDS_MAX: 8, GUARD_RECOVER: 1200,
+  // Thief gulls land on the castle, peck the guards, then steal shells from
+  // the tier being built until the crab chases them off.
+  PECK: 60, STEAL_MAX: 3, SHOO_R: 56, RAID_FAR: 260, RAID_CHANCE: 0.5, RAID_OVER_DIVE: 0.3,
+  // A stinging anemone, found now and then near the water, arms one guard; a
+  // stung gull leaves the beach for a while.
+  ANEMONE_CHANCE: 0.6, STING_AWAY: 1200,
 };
 
 // The castle outlasts a run. Each finished ring stays standing for the next,
@@ -162,32 +178,38 @@ const ROT_C = 0.9999500004166653, ROT_S = 0.009999833334166664;   // cos and sin
 const UPGRADES = [
   { id: 'reach', name: 'Long claws', what: 'Pick up shells from further away', cost: [15, 35, 70] },
   { id: 'legs', name: 'Strong legs', what: 'Each shell carried slows you less', cost: [20, 40, 80] },
-  { id: 'back', name: 'Broad back', what: 'Carry one more shell', cost: [25, 50, 100] },
   { id: 'grip', name: 'Tight grip', what: 'Keep a shell when a gull hits you', cost: [20, 45, 90] },
   { id: 'shell', name: 'Hard shell', what: 'Shake off a hit sooner', cost: [15, 30, 60] },
   { id: 'feet', name: 'Wading feet', what: 'Walk faster in the wet', cost: [10, 25, 50] },
 ];
-function crabStats(up = {}) {
+function crabStats(up = {}, shell = 1) {
   const lv = (id) => Math.max(0, Math.min(3, up[id] | 0));
+  const big = Math.max(1, Math.min(C.SHELL_MAX, shell | 0)) - 1;
   return {
     pickR: C.PICK_R + 6 * lv('reach'),
     loadSlow: C.LOAD_SLOW * (1 - 0.25 * lv('legs')),
-    maxCarry: C.MAX_CARRY + lv('back'),
+    maxCarry: C.MAX_CARRY + big,
+    shellSlow: 1 - C.SHELL_SLOW * big,
+    hitBase: C.HIT_R + C.SHELL_HIT * big,
     keep: lv('grip'),
     stun: C.STUN - 15 * lv('shell'),
     wetSlow: C.WET_SLOW + 0.1 * lv('feet'),
   };
 }
 
-function createWorld(seed, upgrades = {}, ring = 0) {
+// home: what the crab brings from past runs: its shell size, its garrison of
+// { size, armed, home } and spare anemones not yet given to a guard.
+function createWorld(seed, upgrades = {}, ring = 0, home = {}) {
   ring = Math.max(0, Math.min(RINGS.length - 1, ring | 0));
   const at = ringPlace(ring), gy = at.goal.y;
   const s = {
     ring, goal: at.goal, foot: at.foot, tideTicks: at.tideTicks,
     seed: String(seed), tick: 0, phase: 'wait', startTick: 0, endTick: 0,
-    rng: { wash: makeStream(seed, 'wash'), gulls: makeStream(seed, 'gulls') },
+    rng: { wash: makeStream(seed, 'wash'), gulls: makeStream(seed, 'gulls'), finds: makeStream(seed, 'finds') },
     crab: { x: C.CASTLE_X, y: gy + 200, px: C.CASTLE_X, py: gy + 200, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
-    k: crabStats(upgrades), carry: 0, built: 0, shells: [], gulls: [], rest: 0, gap: 0, nextId: 1, events: [],
+    up: upgrades, shell: Math.max(1, Math.min(C.SHELL_MAX, home.shell | 0 || 1)),
+    guards: [], spare: home.spare | 0, vacancy: null, anemone: null, carryAnemone: false,
+    k: null, carry: 0, built: 0, shells: [], gulls: [], rest: 0, gap: 0, nextId: 1, events: [],
     // Where the gulls think the crab is: a point that trails behind it, so a
     // crab that keeps moving is never quite where they are circling.
     trail: { x: C.CASTLE_X, y: gy + 200 },
@@ -197,6 +219,12 @@ function createWorld(seed, upgrades = {}, ring = 0) {
   s.shells.push({ id: s.nextId++, x: C.CASTLE_X, y: gy + 320, wait: 0 });
   const lo = Math.max(600, at.foot + 200);
   for (let i = 0; i < 5; i++) s.shells.push({ id: s.nextId++, x: 60 + next(s.rng.wash) * (C.W - 120), y: lo + next(s.rng.wash) * (850 - lo), wait: 0 });
+  s.k = crabStats(upgrades, s.shell);
+  for (const g of (home.guards || []).slice(0, C.GUARDS_MAX)) addGuard(s, g.size, g.home | 0, !!g.armed);
+  for (const g of s.guards) if (!g.armed && s.spare > 0) { g.armed = true; s.spare--; }
+  // When this run's finds turn up, in ticks after the tide starts.
+  s.vacAt = Math.round(s.tideTicks * (0.15 + 0.3 * next(s.rng.finds)));
+  s.anemAt = next(s.rng.finds) < C.ANEMONE_CHANCE ? Math.round(s.tideTicks * (0.2 + 0.4 * next(s.rng.finds))) : -1;
   return s;
 }
 
@@ -213,8 +241,8 @@ function tideAt(s, tick = s.tick) {
 }
 
 const tierOf = (built) => Math.min(C.TIERS, Math.floor((built * C.TIERS) / C.NEED));
-const hitRadius = (carry) => C.HIT_R + C.HIT_PER_SHELL * carry;
-const speedWith = (carry, wet, k = crabStats()) => C.CRAB_MAX * (1 - k.loadSlow * carry) * (wet ? k.wetSlow : 1);
+const hitRadius = (carry, k) => (k ? k.hitBase : C.HIT_R) + C.HIT_PER_SHELL * carry;
+const speedWith = (carry, wet, k = crabStats()) => C.CRAB_MAX * (k.shellSlow ?? 1) * (1 - k.loadSlow * carry) * (wet ? k.wetSlow : 1);
 
 function washUp(s, calm) {
   for (let i = 0; i < C.SHELLS_PER_WAVE && s.shells.length < C.SHELLS_ON_BEACH; i++) {
@@ -252,9 +280,20 @@ function glide(g, tx, ty, speed, dt) {
   g.x += Math.cos(g.h) * v; g.y += Math.sin(g.h) * v;
 }
 
+function addGuard(s, size, home, armed = false) {
+  if (s.guards.length >= C.GUARDS_MAX) return false;
+  size = Math.max(1, Math.min(C.SHELL_MAX, size | 0));
+  s.guards.push({ id: s.nextId++, size, hp: size, stun: 0, armed, used: false, home, x: 0, y: 0 });
+  // The garrison stands in a row along the front of the ring being built.
+  const n = s.guards.length;
+  s.guards.forEach((g, i) => { g.x = s.goal.x + (i - (n - 1) / 2) * 38; g.y = s.goal.y + 66; });
+  return true;
+}
+
 function dropLoad(s) {
   const c = s.crab;
   const kept = Math.min(s.k.keep, s.carry - 1);           // the gull always gets at least one
+  if (s.carryAnemone) { s.carryAnemone = false; s.events.push({ type: 'anemonelost' }); }
   s.events.push({ type: 'hit', x: c.x, y: c.y, lost: s.carry - kept });
   s.carry = kept; c.stun = s.k.stun; c.vx = 0; c.vy = 0;
 }
@@ -293,11 +332,22 @@ function step(s, input) {
         s.events.push({ type: 'pick', x: sh.x, y: sh.y, carry: s.carry });
       }
     }
+    const a = s.anemone;
+    if (a && s.carry < s.k.maxCarry && Math.hypot(c.x - a.x, c.y - a.y) < s.k.pickR) {
+      s.anemone = null; s.carry++; s.carryAnemone = true;     // it takes a place in the load
+      s.events.push({ type: 'anemone', x: a.x, y: a.y, carry: s.carry });
+    }
   }
   if (s.carry > 0 && Math.hypot(c.x - s.goal.x, c.y - s.goal.y) < C.CASTLE_R + C.CRAB_R) {
-    const before = tierOf(s.built);
-    s.built = Math.min(C.NEED, s.built + s.carry);
-    s.events.push({ type: 'build', n: s.carry, built: s.built });
+    const before = tierOf(s.built), n = s.carry - (s.carryAnemone ? 1 : 0);
+    s.built = Math.min(C.NEED, s.built + n);
+    s.events.push({ type: 'build', n, built: s.built });
+    if (s.carryAnemone) {
+      s.carryAnemone = false;
+      const g = s.guards.find((q) => !q.armed);
+      if (g) g.armed = true; else s.spare++;
+      s.events.push({ type: 'arm', id: g ? g.id : 0, x: g ? g.x : s.goal.x, y: g ? g.y : s.goal.y });
+    }
     s.carry = 0;
     if (s.phase === 'wait') { s.phase = 'play'; s.startTick = s.tick; s.events.push({ type: 'tide' }); }
     if (s.built >= C.NEED) {
@@ -319,6 +369,38 @@ function step(s, input) {
   for (let i = s.shells.length - 1; i >= 0; i--) {
     if (s.shells[i].y > tide.calm + C.SWEPT_DEPTH) { s.events.push({ type: 'swept', x: s.shells[i].x, y: s.shells[i].y }); s.shells.splice(i, 1); }
   }
+  // Finds.
+  const el = s.tick - s.startTick;
+  if (el === s.vacAt) {
+    const size = Math.min(C.SHELL_MAX, s.shell + 1), line = [];
+    for (let i = 0; i < C.LINE; i++) line.push(Math.max(1, size - 2 - i));
+    s.vacancy = { x: 90 + next(s.rng.finds) * (C.W - 180), y: Math.max(s.foot + 70, tide.calm - 55), size, t: C.VAC_TICKS, line };
+    s.events.push({ type: 'vacancy', x: s.vacancy.x, y: s.vacancy.y });
+  }
+  if (el === s.anemAt) {
+    s.anemone = { x: 70 + next(s.rng.finds) * (C.W - 140), y: Math.max(s.foot + 60, tide.calm - 35) };
+    s.events.push({ type: 'anemonewash', x: s.anemone.x, y: s.anemone.y });
+  }
+  const v = s.vacancy;
+  if (v) {
+    v.t--;
+    if (s.carry === 0 && c.stun === 0 && Math.hypot(c.x - v.x, c.y - v.y) < C.PICK_R + 14) {
+      // The chain: the crab moves up, each crab in line takes the shell left
+      // by the one ahead, and the whole line follows it home to the castle.
+      const grew = v.size > s.shell;
+      if (grew) { s.shell = v.size; s.k = crabStats(s.up, s.shell); }
+      let joined = 0;
+      for (const sz of v.line) if (addGuard(s, sz + 1, s.ring > 0 ? s.ring - 1 : 0)) joined++;
+      s.events.push({ type: 'chain', x: v.x, y: v.y, grew, joined, size: s.shell });
+      s.vacancy = null;
+    } else if (v.t <= 0 || v.y > tide.calm + C.SWEPT_DEPTH) {
+      s.events.push({ type: 'chainlost', x: v.x, y: v.y });
+      s.vacancy = null;
+    }
+  }
+  if (s.anemone && s.anemone.y > tide.calm + C.SWEPT_DEPTH) { s.events.push({ type: 'swept', x: s.anemone.x, y: s.anemone.y }); s.anemone = null; }
+  for (const g of s.guards) if (g.stun > 0 && --g.stun === 0) { g.hp = g.size; s.events.push({ type: 'recover', id: g.id }); }
+
   if (tide.u >= 1) { s.phase = 'lost'; s.endTick = s.tick; s.events.push({ type: 'lost', built: s.built }); return s; }
 
   // Gulls. They want shells, so they only trouble a crab that is carrying.
@@ -327,7 +409,10 @@ function step(s, input) {
   const kt = Math.min(1, dt / C.TRAIL);
   s.trail.x += (c.x - s.trail.x) * kt; s.trail.y += (c.y - s.trail.y) * kt;
   if (s.gap > 0) s.gap--;
-  let busy = s.gulls.some((g) => g.state !== 'circle');
+  let busy = s.gulls.some((g) => g.state !== 'circle' && g.state !== 'gone');
+  const per = C.NEED / C.TIERS, floor = tierOf(s.built) * per;
+  const loot = s.built - floor;                      // shells a thief could take from the tier being built
+  const farHome = Math.hypot(c.x - s.goal.x, c.y - s.goal.y) > C.RAID_FAR;
   const want = C.GULLS[Math.min(C.GULLS.length - 1, tierOf(s.built))];
   while (s.gulls.length < want) s.gulls.push(newGull(s));
   for (const g of s.gulls) {
@@ -341,13 +426,26 @@ function step(s, input) {
       // A gull can only choose a crab it has caught up with: outrun the flock
       // and none of them can strike until they close in again.
       const near = Math.hypot(g.x - c.x, g.y - c.y) < C.REACH;
-      if (g.cool <= 0 && near && !busy && s.gap === 0 && s.carry > 0 && s.rest === 0 && c.stun === 0) {
-        busy = true;
-        // The gull picks its spot the moment it chooses the crab, and the crab
-        // stops dead: the ring is locked there and shrinks, so the player has the
-        // whole wind-up to get out of it.
-        g.state = 'wind'; g.t = C.WIND; g.ax = c.x; g.ay = c.y; c.vx = 0; c.vy = 0;
-        s.events.push({ type: 'wind', id: g.id });
+      if (g.cool <= 0 && !busy && s.gap === 0 && s.rest === 0) {
+        // Either go for the crab's load, or, while the crab is far from home,
+        // raid the castle instead.
+        const attack = near && s.carry > 0 && c.stun === 0, canRaid = farHome && loot > 0;
+        let choice = null;
+        if (attack) choice = canRaid && next(s.rng.gulls) < C.RAID_OVER_DIVE ? 'raid' : 'wind';
+        else if (canRaid) { if (next(s.rng.gulls) < C.RAID_CHANCE) choice = 'raid'; else g.cool = C.COOL * 0.5; }
+        if (choice === 'wind') {
+          busy = true;
+          // The gull picks its spot the moment it chooses the crab, and the crab
+          // stops dead: the ring is locked there and shrinks, so the player has the
+          // whole wind-up to get out of it.
+          g.state = 'wind'; g.t = C.WIND; g.ax = c.x; g.ay = c.y; c.vx = 0; c.vy = 0;
+          s.events.push({ type: 'wind', id: g.id });
+        } else if (choice === 'raid') {
+          busy = true;
+          g.state = 'raid'; g.t = 600; g.stolen = 0;
+          g.ax = s.goal.x + (next(s.rng.gulls) - 0.5) * 120; g.ay = s.goal.y + 40;
+          s.events.push({ type: 'raid', id: g.id });
+        }
       }
     } else if (g.state === 'wind') {
       // The warning: a counted wind-up in which the gull cannot strike, aimed
@@ -359,11 +457,49 @@ function step(s, input) {
       }
     } else if (g.state === 'dive') {
       if (toward(g, g.ax, g.ay, C.DIVE_SPEED, dt)) {
-        if (s.carry > 0 && c.stun === 0 && Math.hypot(c.x - g.ax, c.y - g.ay) < hitRadius(s.carry)) dropLoad(s);
+        if (s.carry > 0 && c.stun === 0 && Math.hypot(c.x - g.ax, c.y - g.ay) < hitRadius(s.carry, s.k)) dropLoad(s);
         else s.events.push({ type: 'miss', x: g.ax, y: g.ay });
         g.state = 'circle'; g.cool = C.COOL; s.gap = C.GAP;
         g.h = Math.atan2(g.y - c.y, g.x - c.x);          // pull up and away from the strike
       }
+    } else if (g.state === 'raid' || g.state === 'perch') {
+      if (Math.hypot(c.x - g.x, c.y - g.y) < C.SHOO_R && c.stun === 0) {      // chased off
+        g.state = 'circle'; g.cool = C.COOL; s.gap = C.GAP; g.h = -Math.PI / 2;
+        s.events.push({ type: 'shoo', x: g.x, y: g.y });
+        continue;
+      }
+      if (g.state === 'raid') {
+        glide(g, g.ax, g.ay, C.GULL_SPEED * 1.2, dt);
+        if (Math.hypot(g.x - g.ax, g.y - g.ay) < 8 || --g.t <= 0) {
+          g.x = g.ax; g.y = g.ay; g.state = 'perch'; g.t = C.PECK;
+          s.events.push({ type: 'perch', x: g.x, y: g.y });
+        }
+        continue;
+      }
+      if (--g.t > 0) continue;
+      g.t = C.PECK;
+      // Guards first: each takes as many pecks as its shell is big.
+      let best = null, bd = Infinity;
+      for (const q of s.guards) { const d = Math.hypot(q.x - g.x, q.y - g.y); if (q.stun === 0 && d < bd) { bd = d; best = q; } }
+      if (best) {
+        best.hp--;
+        s.events.push({ type: 'peck', id: best.id, x: best.x, y: best.y });
+        if (best.hp <= 0) { best.stun = C.GUARD_RECOVER; s.events.push({ type: 'stunned', id: best.id, x: best.x, y: best.y }); }
+        if (best.armed && !best.used) {
+          best.used = true;                       // the anemone stings once a run
+          g.state = 'gone'; g.t = C.STING_AWAY; s.gap = C.GAP; g.h = -Math.PI / 2;
+          s.events.push({ type: 'sting', id: best.id, x: best.x, y: best.y });
+        }
+      } else if (loot > 0 && g.stolen < C.STEAL_MAX) {
+        s.built--; g.stolen++;
+        s.events.push({ type: 'steal', x: g.x, y: g.y, built: s.built });
+      } else {
+        g.state = 'circle'; g.cool = C.COOL; s.gap = C.GAP; g.h = -Math.PI / 2;
+        s.events.push({ type: 'leave', x: g.x, y: g.y });
+      }
+    } else if (g.state === 'gone') {
+      glide(g, g.x, -160, C.GULL_SPEED * 1.4, dt);
+      if (--g.t <= 0) { g.state = 'circle'; g.cool = C.COOL; }
     }
   }
   return s;
@@ -731,6 +867,11 @@ function createRenderer(canvas) {
     if (e.type === 'pick') burst(e.x, e.y, Math.ceil(5 * k), ['#fff6dc', '#f6dcc6'], 90);
     if (e.type === 'build') { burst(goal.x, goal.y, Math.ceil((6 + 4 * e.n) * k), ['#fff6dc', '#e8c98a', '#f4a99a'], 170); popups.push({ x: goal.x, y: goal.y - 70, text: '+' + e.n, life: 1, color: '#2f7d4f' }); }
     if (e.type === 'hit') { burst(e.x, e.y, Math.ceil(8 * e.lost * k), SHELL_COLORS, 260); popups.push({ x: e.x, y: e.y - 40, text: '−' + e.lost, life: 1, color: '#c22a3c' }); if (!calm) shake = 14; }
+    if (e.type === 'steal') { burst(e.x, e.y, Math.ceil(6 * k), SHELL_COLORS, 160); popups.push({ x: e.x, y: e.y - 30, text: '−1', life: 1, color: '#c22a3c' }); }
+    if (e.type === 'peck') burst(e.x, e.y - 6, Math.ceil(4 * k), ['#fff6dc', '#e9c9a0'], 90);
+    if (e.type === 'sting') burst(e.x, e.y - 10, Math.ceil(16 * k), ['#e0457b', '#f27aa2', '#fff6dc'], 220);
+    if (e.type === 'shoo') burst(e.x, e.y, Math.ceil(10 * k), ['#fbfbf7', '#b9c2c9'], 180);
+    if (e.type === 'chain') { burst(e.x, e.y, Math.ceil(30 * k), ['#e9c9a0', '#fff6dc', '#f6e39b'], 220); popups.push({ x: e.x, y: e.y - 40, text: '+' + e.joined + ' crabs', life: 1, color: '#2f7d4f' }); }
     if (e.type === 'miss') burst(e.x, e.y, Math.ceil(7 * k), ['#e7d3a0', '#d6bf86'], 110);
     if (e.type === 'tier') burst(goal.x, goal.y - 30, Math.ceil(40 * k), ['#fff6dc', '#f6e39b', '#f4a99a', '#9fd3c7'], 260);
     if (e.type === 'won') burst(goal.x, goal.y - 60, Math.ceil(90 * k), ['#e2553d', '#f6e39b', '#3aa6b9', '#fff6dc', '#c9a3d6'], 340);
@@ -838,11 +979,50 @@ function createRenderer(canvas) {
     }
   }
 
+  // A hermit crab's home shell: a coiled whorl, bigger with each size.
+  function homeShell(x, y, size, scale = 1) {
+    const R = (11 + 4 * size) * scale;
+    g.save(); g.translate(x, y);
+    g.fillStyle = '#e9c9a0'; g.strokeStyle = INK; g.lineWidth = 2 * Math.min(1, scale + 0.2);
+    g.beginPath(); g.ellipse(0, 0, R, R * 0.82, 0, 0, 7); g.fill(); g.stroke();
+    g.lineWidth = 1.4 * Math.min(1, scale + 0.2); g.beginPath();
+    for (let a = 0; a < 9.5; a += 0.25) { const rr = R * 0.86 * (1 - a / 11); const px = Math.cos(a) * rr, py = Math.sin(a) * rr * 0.8; a ? g.lineTo(px, py) : g.moveTo(px, py); }
+    g.stroke(); g.restore();
+  }
+  function anemone(x, y, k = 1, dull = false, time = 0) {
+    g.save(); g.translate(x, y); g.scale(k, k);
+    g.strokeStyle = dull ? '#b9a3a8' : '#e0457b'; g.lineWidth = 2.4; g.lineCap = 'round';
+    for (let i = 0; i < 7; i++) { const a = -Math.PI + (i + 0.5) * Math.PI / 7, w = Math.sin(time * 4 + i) * 0.15; g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(Math.cos(a + w) * 7, Math.sin(a + w) * 9, Math.cos(a) * 10, Math.sin(a) * 11); g.stroke(); }
+    g.fillStyle = dull ? '#cdb8bc' : '#f27aa2'; g.strokeStyle = INK; g.lineWidth = 1.2;
+    g.beginPath(); g.ellipse(0, 1, 7, 5, 0, 0, 7); g.fill(); g.stroke();
+    g.restore();
+  }
+  function guard(q, time, calm) {
+    g.save(); g.translate(q.x, q.y); g.scale(1.3, 1.3);
+    const stunned = q.stun > 0;
+    if (stunned && !calm) g.rotate(Math.sin(time * 9 + q.id) * 0.12);
+    homeShell(0, -6, q.size, 0.6);
+    g.strokeStyle = INK; g.lineWidth = 1.6; g.lineCap = 'round';
+    for (const side of [-1, 1]) { g.beginPath(); g.moveTo(side * 7, 2); g.lineTo(side * 13, 6); g.stroke(); }
+    g.fillStyle = stunned ? '#c98a7c' : '#e2553d';
+    g.beginPath(); g.ellipse(0, 3, 10, 7, 0, 0, 7); g.fill(); g.stroke();
+    for (const side of [-1, 1]) { g.beginPath(); g.arc(side * 10, -1, 4, 0, 7); g.fill(); g.stroke(); }
+    g.fillStyle = '#fff'; for (const side of [-1, 1]) { g.beginPath(); g.arc(side * 3.5, -3, 2.4, 0, 7); g.fill(); g.stroke(); }
+    if (q.armed) anemone(13, -6, 0.6, q.used, calm ? 0 : time);
+    for (let i = 0; i < q.size; i++) {                // pips: pecks it can still take
+      g.fillStyle = i < q.hp && !stunned ? '#2f7d4f' : 'rgba(59,42,26,0.2)';
+      g.beginPath(); g.arc((i - (q.size - 1) / 2) * 6, 15, 2.2, 0, 7); g.fill();
+    }
+    if (stunned) { g.fillStyle = '#f6e39b'; g.strokeStyle = INK; g.lineWidth = 0.8; for (let k = 0; k < 2; k++) { const a = time * (calm ? 2 : 6) + k * 3.1; g.beginPath(); g.arc(Math.cos(a) * 12, -16 + Math.sin(a) * 4, 2.4, 0, 7); g.fill(); g.stroke(); } }
+    g.restore();
+  }
+
   function crab(s, x, y, time, calm) {
     const c = s.crab, stunned = c.stun > 0;
     const step = Math.sin(walk * 0.22);
     g.save(); g.translate(x, y);
     if (stunned && !calm) g.rotate(Math.sin(time * 30) * 0.18);
+    homeShell(-c.fx * 9, -c.fy * 7 + 2, s.shell || 1, 0.9);
     g.strokeStyle = INK; g.lineWidth = 2.2; g.lineCap = 'round';
     for (const side of [-1, 1]) for (let k = -1; k <= 1; k++) {      // legs
       const sw = step * 4 * (k === 0 ? -1 : 1) * side;
@@ -864,7 +1044,11 @@ function createRenderer(canvas) {
     }
     // The load, stacked on its back where both the player and the gulls can see it.
     const lean = Math.max(-1, Math.min(1, -c.vx / 200));
-    for (let i = 0; i < s.carry; i++) shell(lean * i * 2.2, -14 - i * 9.5, i + 1, 10);
+    const top = (s.shell || 1) * 4;
+    for (let i = 0; i < s.carry; i++) {
+      if (s.carryAnemone && i === s.carry - 1) anemone(lean * i * 2.2, -16 - top - i * 9.5, 0.9, false, calm ? 0 : time);
+      else shell(lean * i * 2.2, -14 - top - i * 9.5, i + 1, 10);
+    }
     if (stunned) {
       g.fillStyle = '#f6e39b'; g.strokeStyle = INK; g.lineWidth = 1;
       for (let k = 0; k < 3; k++) { const a = time * (calm ? 2 : 7) + k * 2.1; g.beginPath(); g.arc(Math.cos(a) * 20, -22 + Math.sin(a) * 6, 3, 0, 7); g.fill(); g.stroke(); }
@@ -874,11 +1058,12 @@ function createRenderer(canvas) {
 
   function gull(gl, x, y, time, crabX, crabY) {
     const far = Math.hypot(gl.ax - x, gl.ay - y);
-    const alt = gl.state === 'dive' ? Math.min(74, far * 0.45) : 74;
+    const alt = gl.state === 'dive' ? Math.min(74, far * 0.45) : gl.state === 'raid' ? Math.min(74, far * 0.4) : gl.state === 'perch' ? 6 + Math.max(0, Math.sin(time * 9)) * 4 : 74;
     g.fillStyle = `rgba(40,30,20,${0.26 - alt * 0.0018})`;
     g.beginPath(); g.ellipse(x, y, 20 - alt * 0.08, 8 - alt * 0.03, 0, 0, 7); g.fill();
     let dx = x - gl.px, dy = y - gl.py;
     if (gl.state === 'wind') { dx = crabX - x; dy = crabY - y; }
+    if (gl.state === 'perch') { dx = 0; dy = 1; }
     const ang = Math.atan2(dy, dx), flap = gl.state === 'dive' ? -0.5 : gl.state === 'wind' ? Math.sin(time * 26) * 0.9 : Math.sin(time * 6 + gl.id) * 0.7;
     g.save(); g.translate(x, y - alt); g.rotate(ang);
     g.strokeStyle = INK; g.lineWidth = 1.6; g.lineJoin = 'round';
@@ -925,6 +1110,24 @@ function createRenderer(canvas) {
     g.fillStyle = 'rgba(70,50,30,0.07)'; g.fillRect(L, T, -L, B - T); g.fillRect(C.W, T, R - C.W, B - T);
 
     castle(s, time, calm);
+    for (const q of s.guards || []) guard(q, time, calm);
+    // A perched thief: the dashed circle is where to stand to chase it off.
+    for (const gl of s.gulls) if (gl.state === 'perch') {
+      g.setLineDash([5, 7]); g.strokeStyle = 'rgba(194,42,60,0.7)'; g.lineWidth = 2.5;
+      g.beginPath(); g.arc(gl.x, gl.y, C.SHOO_R, 0, 7); g.stroke(); g.setLineDash([]);
+    }
+    // The big empty shell, its countdown, and the crabs queued behind it.
+    if (s.vacancy) {
+      const v = s.vacancy, u = v.t / C.VAC_TICKS;
+      g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 4;
+      g.beginPath(); g.arc(v.x, v.y, 30, -Math.PI / 2, -Math.PI / 2 + u * Math.PI * 2); g.stroke();
+      homeShell(v.x, v.y, v.size, 0.9);
+      v.line.forEach((sz, i) => { const q = { id: i, x: v.x + 34 + i * 26, y: v.y + 6, size: sz, hp: sz, stun: 0 }; guard(q, time, calm); });
+    }
+    if (s.anemone) {
+      if (!calm) { g.strokeStyle = `rgba(242,122,162,${0.5 + 0.4 * Math.sin(time * 5)})`; g.lineWidth = 2; g.beginPath(); g.arc(s.anemone.x, s.anemone.y, 17, 0, 7); g.stroke(); }
+      anemone(s.anemone.x, s.anemone.y, 1, false, calm ? 0 : time);
+    }
     for (const sh of s.shells) {
       if (s.phase === 'wait' && !calm) { g.strokeStyle = `rgba(255,255,255,${0.5 + 0.4 * Math.sin(time * 5 + sh.id)})`; g.lineWidth = 2; g.beginPath(); g.arc(sh.x, sh.y, 15 + 2 * Math.sin(time * 5 + sh.id), 0, 7); g.stroke(); }
       shell(sh.x, sh.y, sh.id);
@@ -969,7 +1172,7 @@ function createRenderer(canvas) {
     // the ring closes over the wind-up and the gull lands when it shuts.
     for (const gl of s.gulls) {
       if (gl.state !== 'wind' && gl.state !== 'dive') continue;
-      const r = hitRadius(s.carry || 1), locked = gl.state === 'dive';
+      const r = hitRadius(s.carry || 1, s.k), locked = gl.state === 'dive';
       const tx = gl.ax, ty = gl.ay;
       g.fillStyle = locked ? 'rgba(194,42,60,0.3)' : 'rgba(194,42,60,0.12)';
       g.beginPath(); g.arc(tx, ty, r, 0, 7); g.fill();
@@ -1036,11 +1239,17 @@ if (!meta || meta.v !== META_V) meta = { v: META_V, bank: 0, up: {} };
 meta.rings = Math.max(0, Math.min(RINGS.length, meta.rings | 0));
 meta.castles |= 0;
 if (!Array.isArray(meta.best)) meta.best = [];
+// The crab's home shell, its garrison and anemones waiting for a guard.
+meta.shell = Math.max(1, meta.shell | 0);
+if (!Array.isArray(meta.crabs)) meta.crabs = [];
+meta.spare |= 0;
+// Broad back became the home shell: hand back what was spent on it.
+if (meta.up.back) { meta.bank += [25, 50, 100].slice(0, meta.up.back).reduce((a, b) => a + b, 0); delete meta.up.back; }
 const saveMeta = () => store.save('meta', meta);
 let shopOpen = false;
 
 const complete = () => meta.rings >= RINGS.length;
-const newWorld = () => createWorld(newSeed(), meta.up, complete() ? RINGS.length - 1 : meta.rings);
+const newWorld = () => createWorld(newSeed(), meta.up, complete() ? RINGS.length - 1 : meta.rings, { shell: meta.shell, guards: meta.crabs, spare: meta.spare });
 let world = newWorld();
 let mode = 'title', endAt = 0, time = 0, freeze = 0;
 let crabScreen = { x: innerWidth / 2, y: innerHeight / 2 };
@@ -1056,6 +1265,13 @@ function sound(e) {
   else if (e.type === 'miss') audio.tone('sine', 300, 190, 0.12, 0.18);
   else if (e.type === 'tide') audio.tone('sine', 98, 147, 0.7, 0.35);
   else if (e.type === 'won') [523, 659, 784, 1047, 1319].forEach((f, i) => audio.tone('triangle', f, f, 0.3, 0.4, i * 0.11));
+  else if (e.type === 'peck') audio.tone('square', 1400, 900, 0.05, 0.2);
+  else if (e.type === 'steal') audio.tone('sawtooth', 520, 260, 0.16, 0.3);
+  else if (e.type === 'shoo') audio.tone('triangle', 300, 700, 0.15, 0.35);
+  else if (e.type === 'sting') { audio.tone('sawtooth', 1600, 300, 0.25, 0.3); audio.tone('square', 1200, 200, 0.2, 0.2, 0.08); }
+  else if (e.type === 'chain') [392, 523, 659, 784].forEach((f, i) => audio.tone('sine', f, f, 0.2, 0.35, i * 0.08));
+  else if (e.type === 'vacancy' || e.type === 'anemonewash') audio.tone('sine', 880, 1320, 0.25, 0.3);
+  else if (e.type === 'anemone' || e.type === 'arm') audio.tone('triangle', 740, 1110, 0.18, 0.35);
   else if (e.type === 'lost') [392, 330, 262, 196].forEach((f, i) => audio.tone('triangle', f, f * 0.94, 0.34, 0.4, i * 0.16));
 }
 
@@ -1073,6 +1289,8 @@ function begin() {
 function hud() {
   $('count').textContent = `${world.built} / ${C.NEED}`;
   $('ringname').textContent = complete() ? 'Castle complete' : `Ring ${world.ring + 1} of ${RINGS.length}: ${RINGS[world.ring].name}`;
+  const armed = world.guards.filter((g) => g.armed).length;
+  $('garrison').textContent = `Shell size ${world.shell} · ${world.guards.length} guard${world.guards.length === 1 ? '' : 's'}${armed ? `, ${armed} armed` : ''}`;
   const u = tideAt(world).u;
   $('tide').style.width = `${Math.round(u * 100)}%`;
   $('bar').classList.toggle('close', u > 0.75 && world.phase === 'play');
@@ -1096,6 +1314,9 @@ function titleCard() {
 
 function finish(title, line) {
   mode = 'end'; endAt = performance.now();
+  // What the crab takes home: its shell, its garrison and spare anemones.
+  meta.shell = world.shell; meta.spare = world.spare;
+  meta.crabs = world.guards.map((g) => ({ size: g.size, armed: g.armed, home: g.home }));
   // Every shell that reached the castle is banked, win or lose.
   meta.bank += world.built; saveMeta();
   line += ` ${world.built} shell${world.built === 1 ? '' : 's'} banked for the shop.`;
@@ -1130,6 +1351,13 @@ function tick() {
     if (e.type === 'hit' && !calm) freeze = 0.09;      // a held frame; the simulation never pauses
     else if (e.type === 'wind') { input.clearPath(); hold.release('touch'); }   // the crab stops: get out of the ring
     else if (e.type === 'tide') banner('The tide is coming in');
+    else if (e.type === 'vacancy') banner('A big empty shell washed up');
+    else if (e.type === 'chain') banner(e.grew ? `A bigger shell, and ${e.joined} crab${e.joined === 1 ? '' : 's'} join your castle` : `${e.joined} crab${e.joined === 1 ? '' : 's'} join your castle`);
+    else if (e.type === 'chainlost') banner('Another crab took the shell');
+    else if (e.type === 'anemonewash') banner('An anemone washed up');
+    else if (e.type === 'arm') banner(e.id ? 'A guard takes up the anemone' : 'The anemone waits for a guard');
+    else if (e.type === 'perch') banner('A gull is robbing your castle!');
+    else if (e.type === 'sting') banner('Stung! The gull flies off');
     else if (e.type === 'tier') banner(e.tier === 1 ? 'Here come the gulls' : e.tier === C.TIERS - 1 ? 'One tier to go' : 'The gulls scatter');
     else if (e.type === 'won') {
       const spare = Math.floor(e.spare * C.TICK), r = world.ring, best = meta.best[r];
@@ -1141,7 +1369,11 @@ function tick() {
     } else if (e.type === 'lost') {
       const r = world.ring, fell = r > 0 ? RINGS[r - 1].name : null;
       meta.rings = Math.max(0, r - 1);
-      finish('The tide took it', `${e.built} of ${C.NEED} shells of ${RINGS[r].name} were in place.${fell ? ` The sea knocked down ${fell} as well.` : ''}`);
+      // The crabs living in the ring that fell are lost with it.
+      const before = world.guards.length;
+      if (fell) world.guards = world.guards.filter((g) => g.home !== r - 1);
+      const gone = before - world.guards.length;
+      finish('The tide took it', `${e.built} of ${C.NEED} shells of ${RINGS[r].name} were in place.${fell ? ` The sea knocked down ${fell} as well` : ''}${gone ? `, and ${gone} crab${gone > 1 ? 's' : ''} living there with it.` : fell ? '.' : ''}`);
     }
   }
   hud();

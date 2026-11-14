@@ -27,11 +27,17 @@ if (!meta || meta.v !== META_V) meta = { v: META_V, bank: 0, up: {} };
 meta.rings = Math.max(0, Math.min(RINGS.length, meta.rings | 0));
 meta.castles |= 0;
 if (!Array.isArray(meta.best)) meta.best = [];
+// The crab's home shell, its garrison and anemones waiting for a guard.
+meta.shell = Math.max(1, meta.shell | 0);
+if (!Array.isArray(meta.crabs)) meta.crabs = [];
+meta.spare |= 0;
+// Broad back became the home shell: hand back what was spent on it.
+if (meta.up.back) { meta.bank += [25, 50, 100].slice(0, meta.up.back).reduce((a, b) => a + b, 0); delete meta.up.back; }
 const saveMeta = () => store.save('meta', meta);
 let shopOpen = false;
 
 const complete = () => meta.rings >= RINGS.length;
-const newWorld = () => createWorld(newSeed(), meta.up, complete() ? RINGS.length - 1 : meta.rings);
+const newWorld = () => createWorld(newSeed(), meta.up, complete() ? RINGS.length - 1 : meta.rings, { shell: meta.shell, guards: meta.crabs, spare: meta.spare });
 let world = newWorld();
 let mode = 'title', endAt = 0, time = 0, freeze = 0;
 let crabScreen = { x: innerWidth / 2, y: innerHeight / 2 };
@@ -47,6 +53,13 @@ function sound(e) {
   else if (e.type === 'miss') audio.tone('sine', 300, 190, 0.12, 0.18);
   else if (e.type === 'tide') audio.tone('sine', 98, 147, 0.7, 0.35);
   else if (e.type === 'won') [523, 659, 784, 1047, 1319].forEach((f, i) => audio.tone('triangle', f, f, 0.3, 0.4, i * 0.11));
+  else if (e.type === 'peck') audio.tone('square', 1400, 900, 0.05, 0.2);
+  else if (e.type === 'steal') audio.tone('sawtooth', 520, 260, 0.16, 0.3);
+  else if (e.type === 'shoo') audio.tone('triangle', 300, 700, 0.15, 0.35);
+  else if (e.type === 'sting') { audio.tone('sawtooth', 1600, 300, 0.25, 0.3); audio.tone('square', 1200, 200, 0.2, 0.2, 0.08); }
+  else if (e.type === 'chain') [392, 523, 659, 784].forEach((f, i) => audio.tone('sine', f, f, 0.2, 0.35, i * 0.08));
+  else if (e.type === 'vacancy' || e.type === 'anemonewash') audio.tone('sine', 880, 1320, 0.25, 0.3);
+  else if (e.type === 'anemone' || e.type === 'arm') audio.tone('triangle', 740, 1110, 0.18, 0.35);
   else if (e.type === 'lost') [392, 330, 262, 196].forEach((f, i) => audio.tone('triangle', f, f * 0.94, 0.34, 0.4, i * 0.16));
 }
 
@@ -64,6 +77,8 @@ function begin() {
 function hud() {
   $('count').textContent = `${world.built} / ${C.NEED}`;
   $('ringname').textContent = complete() ? 'Castle complete' : `Ring ${world.ring + 1} of ${RINGS.length}: ${RINGS[world.ring].name}`;
+  const armed = world.guards.filter((g) => g.armed).length;
+  $('garrison').textContent = `Shell size ${world.shell} · ${world.guards.length} guard${world.guards.length === 1 ? '' : 's'}${armed ? `, ${armed} armed` : ''}`;
   const u = tideAt(world).u;
   $('tide').style.width = `${Math.round(u * 100)}%`;
   $('bar').classList.toggle('close', u > 0.75 && world.phase === 'play');
@@ -87,6 +102,9 @@ function titleCard() {
 
 function finish(title, line) {
   mode = 'end'; endAt = performance.now();
+  // What the crab takes home: its shell, its garrison and spare anemones.
+  meta.shell = world.shell; meta.spare = world.spare;
+  meta.crabs = world.guards.map((g) => ({ size: g.size, armed: g.armed, home: g.home }));
   // Every shell that reached the castle is banked, win or lose.
   meta.bank += world.built; saveMeta();
   line += ` ${world.built} shell${world.built === 1 ? '' : 's'} banked for the shop.`;
@@ -121,6 +139,13 @@ function tick() {
     if (e.type === 'hit' && !calm) freeze = 0.09;      // a held frame; the simulation never pauses
     else if (e.type === 'wind') { input.clearPath(); hold.release('touch'); }   // the crab stops: get out of the ring
     else if (e.type === 'tide') banner('The tide is coming in');
+    else if (e.type === 'vacancy') banner('A big empty shell washed up');
+    else if (e.type === 'chain') banner(e.grew ? `A bigger shell, and ${e.joined} crab${e.joined === 1 ? '' : 's'} join your castle` : `${e.joined} crab${e.joined === 1 ? '' : 's'} join your castle`);
+    else if (e.type === 'chainlost') banner('Another crab took the shell');
+    else if (e.type === 'anemonewash') banner('An anemone washed up');
+    else if (e.type === 'arm') banner(e.id ? 'A guard takes up the anemone' : 'The anemone waits for a guard');
+    else if (e.type === 'perch') banner('A gull is robbing your castle!');
+    else if (e.type === 'sting') banner('Stung! The gull flies off');
     else if (e.type === 'tier') banner(e.tier === 1 ? 'Here come the gulls' : e.tier === C.TIERS - 1 ? 'One tier to go' : 'The gulls scatter');
     else if (e.type === 'won') {
       const spare = Math.floor(e.spare * C.TICK), r = world.ring, best = meta.best[r];
@@ -132,7 +157,11 @@ function tick() {
     } else if (e.type === 'lost') {
       const r = world.ring, fell = r > 0 ? RINGS[r - 1].name : null;
       meta.rings = Math.max(0, r - 1);
-      finish('The tide took it', `${e.built} of ${C.NEED} shells of ${RINGS[r].name} were in place.${fell ? ` The sea knocked down ${fell} as well.` : ''}`);
+      // The crabs living in the ring that fell are lost with it.
+      const before = world.guards.length;
+      if (fell) world.guards = world.guards.filter((g) => g.home !== r - 1);
+      const gone = before - world.guards.length;
+      finish('The tide took it', `${e.built} of ${C.NEED} shells of ${RINGS[r].name} were in place.${fell ? ` The sea knocked down ${fell} as well` : ''}${gone ? `, and ${gone} crab${gone > 1 ? 's' : ''} living there with it.` : fell ? '.' : ''}`);
     }
   }
   hud();
