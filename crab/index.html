@@ -34,6 +34,24 @@
   #card h1 { margin: 0 0 8px; font: 800 clamp(34px, 9vw, 56px)/1 var(--display); color: #e2553d; text-wrap: balance; }
   #card p { margin: 6px auto; text-wrap: balance; }
   #hint { margin-top: 14px !important; font-weight: 700; color: var(--go); }
+  #card[hidden] { display: none; }
+  #shopbtn { pointer-events: auto; margin-top: 12px; font-size: 15px; padding: 8px 18px; }
+  #shop { box-sizing: border-box; pointer-events: auto; background: var(--paper); border: 3px solid var(--ink); border-radius: 18px; padding: 18px 18px 16px;
+    width: min(100%, 30em); max-height: calc(100% - 16px); overflow-y: auto; box-shadow: 6px 6px 0 rgba(59,42,26,.25); text-align: left; }
+  #shophead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  #shop h2 { margin: 0; font: 800 28px/1 var(--display); color: #e2553d; }
+  #bank { font: 800 20px/1 var(--display); font-variant-numeric: tabular-nums; }
+  #shop .note { margin: 6px 0 10px; font-size: 14px; }
+  #upgrades { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  #upgrades li { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 8px 0; border-top: 2px dashed rgba(59,42,26,.25); }
+  .u-text { min-width: 0; display: flex; flex-direction: column; }
+  .u-text span { font-size: 13px; opacity: .8; }
+  .pips { display: flex; gap: 3px; }
+  .pips i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ink); }
+  .pips i.on { background: #e2553d; }
+  #upgrades button { min-width: 78px; font-variant-numeric: tabular-nums; }
+  #upgrades button:disabled { opacity: .45; cursor: default; }
+  #shopclose { margin-top: 12px; width: 100%; font-size: 15px; }
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@800&family=Nunito:wght@400;600;700&display=swap">
 </head>
@@ -49,6 +67,13 @@
     <h1 id="title">Crab Castle</h1>
     <p id="line">Carry shells up the beach and finish the castle before the tide reaches it. The more you carry, the more the gulls want it.</p>
     <p id="hint">Hold the mouse, drag a thumb, use the arrow keys, or pick up a controller</p>
+    <button id="shopbtn" type="button">Shop</button>
+  </div>
+  <div id="shop" hidden>
+    <div id="shophead"><h2>Shell shop</h2><span id="bank">0 shells</span></div>
+    <p class="note">Every shell that reaches your castle is banked here, win or lose.</p>
+    <ul id="upgrades"></ul>
+    <button id="shopclose" type="button">Back to the beach</button>
   </div>
 </div>
 <script type="module" src="src/main.js"></script>

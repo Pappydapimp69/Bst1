@@ -18,7 +18,7 @@ export function makeBot({ habit = HABITS.read, react = 10 } = {}) {
   return function bot(s) {
     const c = s.crab, tide = tideAt(s);
     let want = habit({ gulls: s.gulls.length, rest: s.rest > 0, tier: tierOf(s.built), carry: s.carry });
-    want = Math.max(1, Math.min(C.MAX_CARRY, want, C.NEED - s.built));
+    want = Math.max(1, Math.min(s.k ? s.k.maxCarry : C.MAX_CARRY, want, C.NEED - s.built));
 
     let tx = C.CASTLE_X, ty = C.CASTLE_Y;
     if (s.carry < want) {

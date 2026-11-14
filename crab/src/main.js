@@ -1,4 +1,4 @@
-import { C, createWorld, step, tideAt, fingerprint } from './sim.js';
+import { C, UPGRADES, createWorld, step, tideAt, fingerprint } from './sim.js';
 import { makeBot } from './bot.js';
 import { createLoop } from '../../src/loop.js';
 import { createHold, bindInput } from '../../src/input.js';
@@ -18,6 +18,13 @@ const audio = createAudio({ muted: store.load('muted', false) });
 // Calm motion follows the system setting until the player chooses otherwise.
 let calm = store.load('calm', matchMedia('(prefers-reduced-motion: reduce)').matches);
 let best = store.load('best', null);          // most seconds to spare on a finished castle
+// Shells banked from past runs and the upgrades bought with them. Versioned,
+// so a later change to its shape starts clean instead of misreading it.
+const META_V = 1;
+let meta = store.load('meta', null);
+if (!meta || meta.v !== META_V) meta = { v: META_V, bank: 0, up: {} };
+const saveMeta = () => store.save('meta', meta);
+let shopOpen = false;
 
 let world = createWorld(newSeed());
 let mode = 'title', endAt = 0, time = 0, freeze = 0;
@@ -39,7 +46,7 @@ function sound(e) {
 
 function begin() {
   // A new run is a new world, made before anything is shown.
-  world = createWorld(newSeed());
+  world = createWorld(newSeed(), meta.up);
   renderer.clear();
   freeze = 0;
   mode = 'play';
@@ -62,6 +69,9 @@ function banner(text) {
 
 function finish(title, line) {
   mode = 'end'; endAt = performance.now();
+  // Every shell that reached the castle is banked, win or lose.
+  meta.bank += world.built; saveMeta();
+  line += ` ${world.built} shells banked for the shop.`;
   $('banner').classList.remove('show');
   $('title').textContent = title;
   $('line').textContent = line;
@@ -122,6 +132,7 @@ const input = bindInput(canvas, hold, {
   onGesture(source, code) {
     audio.unlock();
     if (code === 'KeyM') return toggleSound();
+    if (shopOpen) return;
     if (mode === 'title') begin();
     else if (mode === 'end' && performance.now() - endAt > 700) begin();
   },
@@ -146,6 +157,42 @@ $('sound').addEventListener('click', (e) => { audio.unlock(); toggleSound(); e.c
 $('motion').addEventListener('click', (e) => { calm = !calm; store.save('calm', calm); labels(); e.currentTarget.blur(); });
 labels(); hud();
 
+// The shop: open from the title or end card, never during a run.
+function renderShop() {
+  $('bank').textContent = `${meta.bank} shells`;
+  const list = $('upgrades');
+  list.replaceChildren();
+  for (const u of UPGRADES) {
+    const lv = meta.up[u.id] | 0, cost = u.cost[lv];
+    const row = document.createElement('li');
+    row.innerHTML = `<div class="u-text"><b></b><span></span></div><div class="pips" aria-label="Level ${lv} of 3">${'<i class="on"></i>'.repeat(lv)}${'<i></i>'.repeat(3 - lv)}</div><button type="button"></button>`;
+    row.querySelector('b').textContent = u.name;
+    row.querySelector('span').textContent = u.what;
+    const btn = row.querySelector('button');
+    if (cost === undefined) { btn.textContent = 'Maxed'; btn.disabled = true; }
+    else {
+      btn.textContent = `Buy · ${cost}`;
+      btn.disabled = meta.bank < cost;
+      btn.addEventListener('click', () => {
+        if (meta.bank < cost) return;
+        meta.bank -= cost; meta.up[u.id] = lv + 1; saveMeta();
+        audio.tone('triangle', 660, 990, 0.18, 0.4);
+        renderShop();
+      });
+    }
+    list.append(row);
+  }
+}
+function openShop(open) {
+  shopOpen = open;
+  $('shop').hidden = !open;
+  $('card').hidden = open;
+  if (open) { renderShop(); $('shopclose').focus(); }
+}
+$('shopbtn').addEventListener('click', (e) => { audio.unlock(); openShop(true); e.stopPropagation(); });
+$('shopclose').addEventListener('click', (e) => { openShop(false); e.stopPropagation(); });
+addEventListener('keydown', (e) => { if (shopOpen && e.code === 'Escape') openShop(false); });
+
 requestAnimationFrame(function frame(now) { loop.frame(now); requestAnimationFrame(frame); });
 
 // For tests: the game's own tick and state, so nothing has to wait on a clock.
@@ -156,6 +203,7 @@ window.__game = {
   get seen() { return hold.seen; },
   get audio() { return audio.state; },
   get calm() { return calm; },
+  get meta() { return JSON.parse(JSON.stringify(meta)); },
   hold,
   state: () => JSON.parse(JSON.stringify(world)),
   view: () => ({ ...renderer.view }),

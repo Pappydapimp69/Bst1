@@ -21,12 +21,35 @@ export const C = {
 };
 const ROT_C = 0.9998000066665778, ROT_S = 0.01999866669333308;   // cos and sin of 0.02 rad
 
-export function createWorld(seed) {
+// Upgrades bought between runs with banked shells. Each one eases a single job
+// the load does, a small step per level, three levels at most; a run stays
+// winnable with none of them.
+export const UPGRADES = [
+  { id: 'reach', name: 'Long claws', what: 'Pick up shells from further away', cost: [15, 35, 70] },
+  { id: 'legs', name: 'Strong legs', what: 'Each shell carried slows you less', cost: [20, 40, 80] },
+  { id: 'back', name: 'Broad back', what: 'Carry one more shell', cost: [25, 50, 100] },
+  { id: 'grip', name: 'Tight grip', what: 'Keep a shell when a gull hits you', cost: [20, 45, 90] },
+  { id: 'shell', name: 'Hard shell', what: 'Shake off a hit sooner', cost: [15, 30, 60] },
+  { id: 'feet', name: 'Wading feet', what: 'Walk faster in the wet', cost: [10, 25, 50] },
+];
+export function crabStats(up = {}) {
+  const lv = (id) => Math.max(0, Math.min(3, up[id] | 0));
+  return {
+    pickR: C.PICK_R + 6 * lv('reach'),
+    loadSlow: C.LOAD_SLOW * (1 - 0.25 * lv('legs')),
+    maxCarry: C.MAX_CARRY + lv('back'),
+    keep: lv('grip'),
+    stun: C.STUN - 15 * lv('shell'),
+    wetSlow: C.WET_SLOW + 0.1 * lv('feet'),
+  };
+}
+
+export function createWorld(seed, upgrades = {}) {
   const s = {
     seed: String(seed), tick: 0, phase: 'wait', startTick: 0, endTick: 0,
     rng: { wash: makeStream(seed, 'wash'), gulls: makeStream(seed, 'gulls') },
     crab: { x: C.CASTLE_X, y: 330, px: C.CASTLE_X, py: 330, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
-    carry: 0, built: 0, shells: [], gulls: [], rest: 0, nextId: 1, events: [],
+    k: crabStats(upgrades), carry: 0, built: 0, shells: [], gulls: [], rest: 0, nextId: 1, events: [],
   };
   // The first shell lies between the crab and the plain way down the beach;
   // nothing else moves until it has been carried home.
@@ -49,7 +72,7 @@ export function tideAt(s, tick = s.tick) {
 
 export const tierOf = (built) => Math.min(C.TIERS, Math.floor((built * C.TIERS) / C.NEED));
 export const hitRadius = (carry) => C.HIT_R + C.HIT_PER_SHELL * carry;
-export const speedWith = (carry, wet) => C.CRAB_MAX * (1 - C.LOAD_SLOW * carry) * (wet ? C.WET_SLOW : 1);
+export const speedWith = (carry, wet, k = crabStats()) => C.CRAB_MAX * (1 - k.loadSlow * carry) * (wet ? k.wetSlow : 1);
 
 function washUp(s, calm) {
   for (let i = 0; i < C.SHELLS_PER_WAVE && s.shells.length < C.SHELLS_ON_BEACH; i++) {
@@ -76,8 +99,9 @@ function toward(g, tx, ty, speed, dt) {
 
 function dropLoad(s) {
   const c = s.crab;
-  s.events.push({ type: 'hit', x: c.x, y: c.y, lost: s.carry });
-  s.carry = 0; c.stun = C.STUN; c.vx = 0; c.vy = 0;
+  const kept = Math.min(s.k.keep, s.carry - 1);           // the gull always gets at least one
+  s.events.push({ type: 'hit', x: c.x, y: c.y, lost: s.carry - kept });
+  s.carry = kept; c.stun = s.k.stun; c.vx = 0; c.vy = 0;
 }
 
 export function step(s, input) {
@@ -95,7 +119,7 @@ export function step(s, input) {
   if (c.stun > 0) { c.stun--; ix = 0; iy = 0; }
   if (il > 0.2) { c.fx = ix / Math.hypot(ix, iy); c.fy = iy / Math.hypot(ix, iy); }
   c.px = c.x; c.py = c.y;
-  const wet = c.y > tide.line, top = speedWith(s.carry, wet), drag = C.CRAB_ACC / top;
+  const wet = c.y > tide.line, top = speedWith(s.carry, wet, s.k), drag = C.CRAB_ACC / top;
   c.vx += (ix * C.CRAB_ACC - c.vx * drag) * dt;
   c.vy += (iy * C.CRAB_ACC - c.vy * drag) * dt;
   c.x += c.vx * dt; c.y += c.vy * dt;
@@ -107,9 +131,9 @@ export function step(s, input) {
   // Gathering and building.
   for (const sh of s.shells) if (sh.wait > 0) sh.wait--;
   if (c.stun === 0) {
-    for (let i = s.shells.length - 1; i >= 0 && s.carry < C.MAX_CARRY; i--) {
+    for (let i = s.shells.length - 1; i >= 0 && s.carry < s.k.maxCarry; i--) {
       const sh = s.shells[i];
-      if (sh.wait === 0 && Math.hypot(c.x - sh.x, c.y - sh.y) < C.PICK_R) {
+      if (sh.wait === 0 && Math.hypot(c.x - sh.x, c.y - sh.y) < s.k.pickR) {
         s.shells.splice(i, 1); s.carry++;
         s.events.push({ type: 'pick', x: sh.x, y: sh.y, carry: s.carry });
       }
