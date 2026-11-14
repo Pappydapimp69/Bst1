@@ -23,8 +23,9 @@ export const C = {
   // more but is slower and a bigger target.
   SHELL_MAX: 4, SHELL_SLOW: 0.04, SHELL_HIT: 3,
   // A bigger empty shell washes up once a run, with a wild crab waiting by
-  // it; reach it with empty claws before that crab gives up waiting.
-  VAC_TICKS: 720,
+  // it; reach it before that crab gives up waiting. Taking it, or an
+  // anemone, sets down every seashell carried, out of reach for a moment.
+  VAC_TICKS: 720, SET_DOWN_R: 48, SET_DOWN_WAIT: 180,
   // The garrison: crabs who joined the castle. A guard takes as many pecks as
   // its shell is big, then is stunned until it recovers.
   GUARDS_MAX: 8, GUARD_RECOVER: 1200,
@@ -175,6 +176,20 @@ function addGuard(s, size, home, armed = false) {
   return true;
 }
 
+// Set the seashells in the load down on the sand in a ring around the crab,
+// keeping an anemone if one is carried.
+function setDown(s) {
+  const n = s.carry - (s.carryAnemone ? 1 : 0), c = s.crab;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + 0.4;
+    const x = Math.max(20, Math.min(C.W - 20, c.x + Math.cos(a) * C.SET_DOWN_R));
+    const y = Math.max(s.foot + 30, Math.min(C.H - 20, c.y + Math.sin(a) * C.SET_DOWN_R));
+    s.shells.push({ id: s.nextId++, x, y, wait: C.SET_DOWN_WAIT });
+  }
+  s.carry -= n;
+  if (n > 0) s.events.push({ type: 'setdown', n, x: c.x, y: c.y });
+}
+
 function dropLoad(s) {
   const c = s.crab;
   const kept = Math.min(s.k.keep, s.carry - 1);           // the gull always gets at least one
@@ -218,7 +233,8 @@ export function step(s, input) {
       }
     }
     const a = s.anemone;
-    if (a && s.carry < s.k.maxCarry && Math.hypot(c.x - a.x, c.y - a.y) < s.k.pickR) {
+    if (a && !s.carryAnemone && Math.hypot(c.x - a.x, c.y - a.y) < s.k.pickR) {
+      setDown(s);                                              // the seashells go down to take it up
       s.anemone = null; s.carry++; s.carryAnemone = true;     // it takes a place in the load
       s.events.push({ type: 'anemone', x: a.x, y: a.y, carry: s.carry });
     }
@@ -268,7 +284,8 @@ export function step(s, input) {
   const v = s.vacancy;
   if (v) {
     v.t--;
-    if (s.carry === 0 && c.stun === 0 && Math.hypot(c.x - v.x, c.y - v.y) < C.PICK_R + 14) {
+    if (c.stun === 0 && Math.hypot(c.x - v.x, c.y - v.y) < C.PICK_R + 14) {
+      setDown(s);                                   // seashells go down, a carried anemone stays
       // A vacancy chain: the crab moves into the new shell, its old shell goes
       // to the biggest guard, each guard takes the shell left by the one ahead,
       // and the smallest shell left over houses one new crab. A bare crab

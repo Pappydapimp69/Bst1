@@ -56,6 +56,7 @@ function sound(e) {
   else if (e.type === 'miss') audio.tone('sine', 300, 190, 0.12, 0.18);
   else if (e.type === 'tide') audio.tone('sine', 98, 147, 0.7, 0.35);
   else if (e.type === 'won') [523, 659, 784, 1047, 1319].forEach((f, i) => audio.tone('triangle', f, f, 0.3, 0.4, i * 0.11));
+  else if (e.type === 'setdown') for (let i = 0; i < Math.min(e.n, 4); i++) audio.tone('triangle', 660 - i * 80, 520 - i * 80, 0.08, 0.3, i * 0.05);
   else if (e.type === 'peck') audio.tone('square', 1400, 900, 0.05, 0.2);
   else if (e.type === 'steal') audio.tone('sawtooth', 520, 260, 0.16, 0.3);
   else if (e.type === 'shoo') audio.tone('triangle', 300, 700, 0.15, 0.35);
