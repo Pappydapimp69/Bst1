@@ -38,7 +38,9 @@
   #card p { margin: 6px auto; text-wrap: balance; }
   #hint { margin-top: 14px !important; font-weight: 700; color: var(--go); }
   #card[hidden] { display: none; }
-  #shopbtn { pointer-events: auto; margin-top: 12px; font-size: 15px; padding: 8px 18px; }
+  #shopbtn, #resetbtn { pointer-events: auto; margin-top: 12px; font-size: 15px; padding: 8px 18px; }
+  #resetbtn { margin-left: 8px; font-size: 13px; opacity: .75; }
+  #resetbtn.armed { opacity: 1; color: var(--alarm); border-color: var(--alarm); }
   #shop { box-sizing: border-box; pointer-events: auto; background: var(--paper); border: 3px solid var(--ink); border-radius: 18px; padding: 18px 18px 16px;
     width: min(100%, 30em); max-height: calc(100% - 16px); overflow-y: auto; box-shadow: 6px 6px 0 rgba(59,42,26,.25); text-align: left; }
   #shophead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
@@ -70,7 +72,7 @@
     <h1 id="title">Crab Castle</h1>
     <p id="line">Carry shells up the beach and finish the castle before the tide reaches it. The more you carry, the more the gulls want it.</p>
     <p id="hint">Hold the mouse, drag a thumb, use the arrow keys, or pick up a controller</p>
-    <button id="shopbtn" type="button">Shop</button>
+    <button id="shopbtn" type="button">Shop</button><button id="resetbtn" type="button">Start over</button>
   </div>
   <div id="shop" hidden>
     <div id="shophead"><h2>Shell shop</h2><span id="bank">0 shells</span></div>

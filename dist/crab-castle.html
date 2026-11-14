@@ -34,7 +34,9 @@
   #card p { margin: 6px auto; text-wrap: balance; }
   #hint { margin-top: 14px !important; font-weight: 700; color: var(--go); }
   #card[hidden] { display: none; }
-  #shopbtn { pointer-events: auto; margin-top: 12px; font-size: 15px; padding: 8px 18px; }
+  #shopbtn, #resetbtn { pointer-events: auto; margin-top: 12px; font-size: 15px; padding: 8px 18px; }
+  #resetbtn { margin-left: 8px; font-size: 13px; opacity: .75; }
+  #resetbtn.armed { opacity: 1; color: var(--alarm); border-color: var(--alarm); }
   #shop { box-sizing: border-box; pointer-events: auto; background: var(--paper); border: 3px solid var(--ink); border-radius: 18px; padding: 18px 18px 16px;
     width: min(100%, 30em); max-height: calc(100% - 16px); overflow-y: auto; box-shadow: 6px 6px 0 rgba(59,42,26,.25); text-align: left; }
   #shophead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
@@ -64,7 +66,7 @@
     <h1 id="title">Crab Castle</h1>
     <p id="line">Carry shells up the beach and finish the castle before the tide reaches it. The more you carry, the more the gulls want it.</p>
     <p id="hint">Hold the mouse, drag a thumb, use the arrow keys, or pick up a controller</p>
-    <button id="shopbtn" type="button">Shop</button>
+    <button id="shopbtn" type="button">Shop</button><button id="resetbtn" type="button">Start over</button>
   </div>
   <div id="shop" hidden>
     <div id="shophead"><h2>Shell shop</h2><span id="bank">0 shells</span></div>
@@ -1481,6 +1483,24 @@ function openShop(open) {
   if (open) { renderShop(); $('shopclose').focus(); }
 }
 $('shopbtn').addEventListener('click', (e) => { audio.unlock(); openShop(true); e.stopPropagation(); });
+// Start over: erase the castle, garrison, shell, bank and upgrades. It asks
+// for a second press, and the sound and motion settings are kept.
+let resetArmed = 0;
+$('resetbtn').addEventListener('click', (e) => {
+  e.stopPropagation(); e.currentTarget.blur();
+  const b = $('resetbtn');
+  if (!resetArmed || performance.now() - resetArmed > 4000) {
+    resetArmed = performance.now(); b.classList.add('armed'); b.textContent = 'Press again to erase it all';
+    setTimeout(() => { if (resetArmed && performance.now() - resetArmed >= 4000) { b.classList.remove('armed'); b.textContent = 'Start over'; } }, 4100);
+    return;
+  }
+  resetArmed = 0; b.classList.remove('armed'); b.textContent = 'Start over';
+  meta = { v: META_V, bank: 0, up: {}, rings: 0, castles: 0, best: [], shell: 0, crabs: [], spare: 0 };
+  saveMeta(); store.save('best', null);
+  world = newWorld(); renderer.clear(); mode = 'title';
+  titleCard(); $('hint').textContent = input.touch ? 'Tap where to go, or draw the way' : 'Hold the mouse, drag a thumb, use the arrow keys, or pick up a controller';
+  hud(); banner('A fresh beach');
+});
 $('shopclose').addEventListener('click', (e) => { openShop(false); e.stopPropagation(); });
 addEventListener('keydown', (e) => { if (shopOpen && e.code === 'Escape') openShop(false); });
 

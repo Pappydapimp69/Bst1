@@ -245,6 +245,24 @@ function openShop(open) {
   if (open) { renderShop(); $('shopclose').focus(); }
 }
 $('shopbtn').addEventListener('click', (e) => { audio.unlock(); openShop(true); e.stopPropagation(); });
+// Start over: erase the castle, garrison, shell, bank and upgrades. It asks
+// for a second press, and the sound and motion settings are kept.
+let resetArmed = 0;
+$('resetbtn').addEventListener('click', (e) => {
+  e.stopPropagation(); e.currentTarget.blur();
+  const b = $('resetbtn');
+  if (!resetArmed || performance.now() - resetArmed > 4000) {
+    resetArmed = performance.now(); b.classList.add('armed'); b.textContent = 'Press again to erase it all';
+    setTimeout(() => { if (resetArmed && performance.now() - resetArmed >= 4000) { b.classList.remove('armed'); b.textContent = 'Start over'; } }, 4100);
+    return;
+  }
+  resetArmed = 0; b.classList.remove('armed'); b.textContent = 'Start over';
+  meta = { v: META_V, bank: 0, up: {}, rings: 0, castles: 0, best: [], shell: 0, crabs: [], spare: 0 };
+  saveMeta(); store.save('best', null);
+  world = newWorld(); renderer.clear(); mode = 'title';
+  titleCard(); $('hint').textContent = input.touch ? 'Tap where to go, or draw the way' : 'Hold the mouse, drag a thumb, use the arrow keys, or pick up a controller';
+  hud(); banner('A fresh beach');
+});
 $('shopclose').addEventListener('click', (e) => { openShop(false); e.stopPropagation(); });
 addEventListener('keydown', (e) => { if (shopOpen && e.code === 'Escape') openShop(false); });
 
