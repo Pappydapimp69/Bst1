@@ -1,0 +1,856 @@
+<title>Glowmoth</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #05080f; overflow: hidden; color: #f3ead2;
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-user-select: none; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+  #hud { position: fixed; inset: 0; pointer-events: none; padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left)); }
+  #stats { position: absolute; left: max(14px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top)); font-weight: 600; text-shadow: 0 1px 4px #000; }
+  #stats span { display: block; }
+  #best { opacity: .65; font-weight: 400; font-size: 14px; }
+  #bar { position: absolute; left: 50%; top: max(16px, env(safe-area-inset-top)); transform: translateX(-50%); width: min(38vw, 300px); height: 12px;
+    border-radius: 8px; background: rgba(255,255,255,.12); box-shadow: 0 0 0 1px rgba(255,255,255,.18); overflow: hidden; }
+  @media (max-width: 560px) { #bar { left: max(14px, env(safe-area-inset-left)); top: calc(max(12px, env(safe-area-inset-top)) + 52px); transform: none; width: 42vw; } }
+  #glow { height: 100%; width: 100%; border-radius: 8px; background: linear-gradient(90deg, #ffb347, #ffe9a3); }
+  #glow.low { background: #ff6a5a; }
+  #buttons { position: absolute; right: max(14px, env(safe-area-inset-right)); top: max(10px, env(safe-area-inset-top)); display: flex; flex-direction: column; gap: 6px; pointer-events: auto; }
+  button { font: inherit; font-size: 13px; color: #f3ead2; background: rgba(10,16,30,.6); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; padding: 6px 10px; min-height: 34px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #ffd76a; }
+  #banner { position: absolute; left: 0; right: 0; top: 22%; text-align: center; font-size: clamp(20px, 4vw, 34px); font-weight: 700; letter-spacing: .04em;
+    text-shadow: 0 2px 10px #000; opacity: 0; }
+  #banner.show { animation: rise 2.2s ease-out; }
+  @keyframes rise { 0% { opacity: 0; transform: translateY(10px); } 15% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { #banner.show { animation-name: fade; } @keyframes fade { 0%, 100% { opacity: 0; } 15%, 70% { opacity: 1; } } }
+  #overlay { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(5,8,15,.35), rgba(5,8,15,.82)); }
+  #overlay[hidden] { display: none; }
+  #overlay h1 { margin: 0 0 10px; font-size: clamp(34px, 8vw, 64px); color: #ffe2a0; text-shadow: 0 0 28px rgba(255,190,90,.55); }
+  #overlay p { margin: 6px auto; max-width: 30em; text-wrap: balance; }
+  #hint { margin-top: 18px !important; font-weight: 600; color: #ffd76a; }
+</style>
+<canvas id="game" aria-label="Glowmoth game"></canvas>
+<div id="hud">
+  <div id="stats"><span id="score">Pollen 0</span><span id="best">Best 0</span></div>
+  <div id="bar" role="img" aria-label="Light remaining"><div id="glow"></div></div>
+  <div id="buttons"><button id="sound" type="button">Sound on</button><button id="motion" type="button">Motion full</button></div>
+  <div id="banner" aria-live="polite"></div>
+</div>
+<div id="overlay">
+  <div>
+    <h1 id="title">Glowmoth</h1>
+    <p id="line">Your light is burning down. Gather the glowing pollen to keep it, and stay clear of the bats that hunt it.</p>
+    <p id="hint">Hold the mouse, drag a thumb, or use the arrow keys</p>
+  </div>
+</div>
+<script type="module">
+// ---- rng.js
+// Seeded random streams. Each consumer gets its own stream keyed by a stable
+// name, so adding a consumer never shifts another's draws. A stream's whole
+// state is four integer words, so it saves as plain JSON.
+
+// Hash the seed text first: raw small seeds give alike first draws.
+function hasher(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489917);
+    return (h ^= h >>> 16) >>> 0;
+  };
+}
+
+function makeStream(seed, name) {
+  const h = hasher(String(seed) + ':' + name);
+  const s = [h(), h(), h(), h()];
+  for (let i = 0; i < 12; i++) next(s);
+  return s;
+}
+
+// sfc32 stepped in place on the four words; returns a float in [0, 1).
+function next(s) {
+  let a = s[0] | 0, b = s[1] | 0, c = s[2] | 0, d = s[3] | 0;
+  const t = (((a + b) | 0) + d) | 0;
+  d = (d + 1) | 0;
+  a = b ^ (b >>> 9);
+  b = (c + (c << 3)) | 0;
+  c = (c << 21) | (c >>> 11);
+  c = (c + t) | 0;
+  s[0] = a; s[1] = b; s[2] = c; s[3] = d;
+  return (t >>> 0) / 4294967296;
+}
+
+// ---- sim.js
+// The whole game as a pure simulation on a fixed tick. No wall clock, no
+// ambient randomness, no DOM: the same seed and inputs give the same run in
+// Node and in a browser. tests/sim.test.mjs scans this file to keep it so.
+
+const C = {
+  TICK: 1 / 60,
+  W: 2400, H: 1600,
+  MOTH_R: 10, MOTH_ACC: 1400, MOTH_MAX: 260,
+  POLLEN_N: 6, POLLEN_R: 26, POLLEN_GAIN: 0.22,
+  // Pollen stays this far inside the hedge: well over the moth's radius, so a
+  // grain against the wall can be reached from any approach angle.
+  POLLEN_MARGIN: 60,
+  DRAIN: 0.045, DRAIN_PER_WAVE: 0.007, DRAIN_MAX: 0.14,
+  BAT_R: 14, BAT_SPEED: 150, BAT_SPEED_PER_WAVE: 10, BAT_SPEED_MAX: 225,
+  BAT_ACC: 220, BAT_CAP: 10, BAT_RING: 520, BAT_WARM: 60, BAT_GAP: 45,
+  HIT_COST: 0.3, HIT_SAFE: 90,
+  GRACE: 180, TENSE: 20 * 60, REST: 6 * 60,
+};
+const CYCLE = C.TENSE + C.REST;
+
+function createWorld(seed) {
+  const s = {
+    seed: String(seed), tick: 0,
+    rng: { pollen: makeStream(seed, 'pollen'), bats: makeStream(seed, 'bats') },
+    moth: { x: C.W / 2, y: C.H / 2, px: C.W / 2, py: C.H / 2, vx: 0, vy: 0, safe: 0 },
+    glow: 1, score: 0, pollen: [], bats: [], batGap: 0, nextId: 1,
+    over: false, events: [],
+  };
+  for (let i = 0; i < C.POLLEN_N; i++) s.pollen.push(placePollen(s));
+  return s;
+}
+
+// Tense and release: a flat opening, then waves that climb and ease off, each
+// starting a little below the last one's peak.
+function waveAt(tick) {
+  const t = Math.max(0, tick - C.GRACE);
+  const wave = Math.floor(t / CYCLE);
+  const phase = t % CYCLE;
+  const rest = tick < C.GRACE || phase >= C.TENSE;
+  const p = Math.min(1, phase / C.TENSE);
+  const bats = rest ? 0 : Math.min(C.BAT_CAP, Math.floor(1 + 0.5 * wave + p * (1.5 + 0.5 * wave)));
+  return { wave, rest, bats, p };
+}
+
+function placePollen(s) {
+  const m = C.POLLEN_MARGIN;
+  let x = 0, y = 0;
+  for (let i = 0; i < 12; i++) {
+    x = m + next(s.rng.pollen) * (C.W - 2 * m);
+    y = m + next(s.rng.pollen) * (C.H - 2 * m);
+    if (Math.hypot(x - s.moth.x, y - s.moth.y) < 300) continue;
+    if (s.pollen.some((p) => Math.hypot(x - p.x, y - p.y) < 150)) continue;
+    break;
+  }
+  return { id: s.nextId++, x, y };
+}
+
+function spawnBat(s) {
+  // A point on a ring round the moth, by rejection so no trig is involved.
+  let u = 0, v = 0, l = 0;
+  do {
+    u = next(s.rng.bats) * 2 - 1;
+    v = next(s.rng.bats) * 2 - 1;
+    l = Math.hypot(u, v);
+  } while (l < 0.1 || l > 1);
+  const x = s.moth.x + (u / l) * C.BAT_RING, y = s.moth.y + (v / l) * C.BAT_RING;
+  // The warning is part of the simulation: a tick-counted entry during which
+  // the bat cannot strike, not a fade drawn over a live enemy.
+  s.bats.push({ id: s.nextId++, x, y, px: x, py: y, vx: 0, vy: 0, warm: C.BAT_WARM, leaving: false });
+  s.events.push({ type: 'warn', x, y });
+}
+
+function step(s, input) {
+  if (s.over) return s;
+  s.events = [];
+  s.tick++;
+  const dt = C.TICK, m = s.moth, w = waveAt(s.tick);
+  if (!w.rest && w.p === 0) s.events.push({ type: 'wave', wave: w.wave });
+
+  // Moth: thrust along the held direction against drag.
+  let ix = Number.isFinite(input && input.x) ? input.x : 0;
+  let iy = Number.isFinite(input && input.y) ? input.y : 0;
+  const il = Math.hypot(ix, iy);
+  if (il > 1) { ix /= il; iy /= il; }
+  m.px = m.x; m.py = m.y;
+  const drag = C.MOTH_ACC / C.MOTH_MAX;
+  m.vx += (ix * C.MOTH_ACC - m.vx * drag) * dt;
+  m.vy += (iy * C.MOTH_ACC - m.vy * drag) * dt;
+  m.x += m.vx * dt; m.y += m.vy * dt;
+  if (m.x < C.MOTH_R) { m.x = C.MOTH_R; m.vx = 0; }
+  if (m.x > C.W - C.MOTH_R) { m.x = C.W - C.MOTH_R; m.vx = 0; }
+  if (m.y < C.MOTH_R) { m.y = C.MOTH_R; m.vy = 0; }
+  if (m.y > C.H - C.MOTH_R) { m.y = C.H - C.MOTH_R; m.vy = 0; }
+  if (m.safe > 0) m.safe--;
+
+  // Bats.
+  const speed = Math.min(C.BAT_SPEED_MAX, C.BAT_SPEED + C.BAT_SPEED_PER_WAVE * w.wave);
+  let hunting = 0;
+  for (const b of s.bats) {
+    b.px = b.x; b.py = b.y;
+    if (w.rest) b.leaving = true;
+    if (!b.leaving) hunting++;
+    if (b.warm > 0) { b.warm--; continue; }
+    let dx = m.x - b.x, dy = m.y - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (b.leaving) { dx = -dx; dy = -dy; }
+    const ax = (dx / d) * speed - b.vx, ay = (dy / d) * speed - b.vy;
+    const al = Math.hypot(ax, ay) || 1, k = Math.min(1, (C.BAT_ACC * dt) / al);
+    b.vx += ax * k; b.vy += ay * k;
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (b.leaving) { if (d > 900) b.gone = true; continue; }
+    if (m.safe === 0 && Math.hypot(m.x - b.x, m.y - b.y) < C.MOTH_R + C.BAT_R) {
+      s.glow -= C.HIT_COST;
+      m.safe = C.HIT_SAFE;
+      b.leaving = true;
+      s.events.push({ type: 'hit', x: m.x, y: m.y });
+    }
+  }
+  s.bats = s.bats.filter((b) => !b.gone);
+  if (s.batGap > 0) s.batGap--;
+  if (hunting < w.bats && s.batGap === 0) { spawnBat(s); s.batGap = C.BAT_GAP; }
+
+  // Pollen.
+  for (let i = 0; i < s.pollen.length; i++) {
+    const p = s.pollen[i];
+    if (Math.hypot(m.x - p.x, m.y - p.y) < C.POLLEN_R) {
+      s.score++;
+      s.glow = Math.min(1, s.glow + C.POLLEN_GAIN);
+      s.events.push({ type: 'pollen', x: p.x, y: p.y });
+      s.pollen[i] = { id: 0, x: -9999, y: -9999 };
+      s.pollen[i] = placePollen(s);
+    }
+  }
+
+  // The light burns down; faster each wave.
+  s.glow -= Math.min(C.DRAIN_MAX, C.DRAIN + C.DRAIN_PER_WAVE * w.wave) * dt;
+  if (s.glow <= 0) { s.glow = 0; s.over = true; s.events.push({ type: 'over' }); }
+  return s;
+}
+
+// A number that changes if any part of the run drifts.
+function fingerprint(s) {
+  let h = 2166136261;
+  const add = (n) => { h = Math.imul(h ^ (Math.round(n) | 0), 16777619); };
+  add(s.tick); add(s.score); add(s.glow * 1e6);
+  add(s.moth.x * 64); add(s.moth.y * 64);
+  for (const p of s.pollen) { add(p.x * 64); add(p.y * 64); }
+  for (const b of s.bats) { add(b.x * 64); add(b.y * 64); add(b.warm); }
+  for (const k of Object.keys(s.rng)) for (const n of s.rng[k]) add(n);
+  return h >>> 0;
+}
+
+// ---- bot.js
+// A player that plays well enough to calibrate the game against and to drive
+// replays. It reads the world and returns a held direction; it draws no
+// random numbers, so it cannot disturb the run it is measuring.
+
+const HEADINGS = [];
+for (let i = 0; i < 16; i++) HEADINGS.push([Math.cos((i / 16) * 2 * Math.PI), Math.sin((i / 16) * 2 * Math.PI)]);
+const LOOK = 60, STRIDE = 4, NEAR = 64;
+
+// When a bat on its present course would first come within NEAR of a moth
+// flying this heading, in ticks; LOOK + 1 if never.
+function entryTime(s, b, hx, hy) {
+  const dt = C.TICK;
+  for (let t = STRIDE; t <= LOOK; t += STRIDE) {
+    const lead = Math.max(0, t - b.warm) * dt;
+    const mx = s.moth.x + hx * C.MOTH_MAX * t * dt, my = s.moth.y + hy * C.MOTH_MAX * t * dt;
+    let bx = b.x + b.vx * lead, by = b.y + b.vy * lead;
+    if (b.warm > 0) {
+      // A waking bat will head for the moth: assume it closes straight in.
+      const dx = mx - b.x, dy = my - b.y, d = Math.hypot(dx, dy) || 1;
+      bx = b.x + (dx / d) * C.BAT_SPEED * lead; by = b.y + (dy / d) * C.BAT_SPEED * lead;
+    }
+    if (Math.hypot(mx - bx, my - by) < NEAR) return t;
+  }
+  return LOOK + 1;
+}
+
+function botInput(s) {
+  const m = s.moth;
+  let goal = null, gd = Infinity;
+  for (const p of s.pollen) {
+    const d = Math.hypot(p.x - m.x, p.y - m.y);
+    if (d < gd) { gd = d; goal = p; }
+  }
+  const gx = goal ? (goal.x - m.x) / (gd || 1) : 0, gy = goal ? (goal.y - m.y) / (gd || 1) : 0;
+  const hunters = s.bats.filter((b) => !b.leaving);
+  let best = [gx, gy], bestScore = -Infinity;
+  const options = HEADINGS.concat([[gx, gy]]);
+  for (const [hx, hy] of options) {
+    // Judge a heading by the threat that arrives first, by entry time, not by
+    // whichever bat happens to be scanned last.
+    let first = LOOK + 1;
+    for (const b of hunters) first = Math.min(first, entryTime(s, b, hx, hy));
+    const danger = first > LOOK ? 0 : 1 + (LOOK - first) / LOOK;
+    const score = hx * gx + hy * gy - danger * 3;
+    if (score > bestScore) { bestScore = score; best = [hx, hy]; }
+  }
+  return { x: best[0], y: best[1] };
+}
+
+// ---- loop.js
+// Fixed-step loop fed by an accumulator. A frame's elapsed time is capped so a
+// stall cannot snowball into catch-up steps; leftover time carries over and
+// the picture is blended between the last two states by `alpha`.
+function createLoop({ dt, step, render, maxFrame = 0.25 }) {
+  let acc = 0, last = null, manual = false;
+  return {
+    frame(nowMs) {
+      const elapsed = last === null ? 0 : Math.min(maxFrame, Math.max(0, (nowMs - last) / 1000));
+      last = nowMs;
+      if (!manual) {
+        acc += elapsed;
+        while (acc >= dt) { step(); acc -= dt; }
+      }
+      render(manual ? 1 : acc / dt, elapsed);
+    },
+    // Stepping by hand (tests): drop the real-time remainder and stop feeding
+    // it, or the frame loop runs extra ticks between the hand's steps.
+    stepBy(n) {
+      manual = true; acc = 0;
+      for (let i = 0; i < n; i++) step();
+    },
+    resume() { manual = false; acc = 0; last = null; },
+    get manual() { return manual; },
+  };
+}
+
+// ---- camera.js
+// A follow camera that holds still while the target is inside a dead-zone box
+// and moves only when the target reaches the box's edge.
+function followCamera(cam, target, view, world, zone = 0.22) {
+  const hw = (view.w * zone) / 2, hh = (view.h * zone) / 2;
+  let x = cam.x, y = cam.y;
+  if (target.x > x + hw) x = target.x - hw;
+  if (target.x < x - hw) x = target.x + hw;
+  if (target.y > y + hh) y = target.y - hh;
+  if (target.y < y - hh) y = target.y + hh;
+  // Keep the view inside the world; centre it on an axis the view outgrows.
+  const cx = view.w >= world.w ? world.w / 2 : Math.min(world.w - view.w / 2, Math.max(view.w / 2, x));
+  const cy = view.h >= world.h ? world.h / 2 : Math.min(world.h - view.h / 2, Math.max(view.h / 2, y));
+  return { x: cx, y: cy };
+}
+
+// ---- input.js
+// One hold controller for every input method. Keys, mouse and touch each hold
+// a direction under their own source name; the game reads a single vector, so
+// nothing can be held by a pointer that a keyboard cannot also hold.
+function createHold() {
+  const held = new Map();
+  const seen = new Set();
+  return {
+    set(source, x, y) { held.set(source, { x, y }); seen.add(source); },
+    release(source) { held.delete(source); },
+    releaseAll() { held.clear(); },
+    vector() {
+      let x = 0, y = 0;
+      for (const v of held.values()) { x += v.x; y += v.y; }
+      const l = Math.hypot(x, y);
+      return l > 1 ? { x: x / l, y: y / l } : { x, y };
+    },
+    get seen() { return [...seen]; },
+    get holding() { return held.size > 0; },
+  };
+}
+
+const KEYS = {
+  ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+  KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1],
+};
+const STICK = 56;    // CSS px of thumb travel for full thrust
+const REACH = 90;    // CSS px from the moth for full thrust with a mouse
+
+function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
+  const down = new Set();
+  let pointer = null;   // { id, touch, ox, oy, x, y }
+  let touch = false;
+
+  const keysVector = () => {
+    let x = 0, y = 0;
+    for (const code of down) { x += KEYS[code][0]; y += KEYS[code][1]; }
+    if (x || y) hold.set('keys', x, y); else hold.release('keys');
+  };
+  const pointerVector = () => {
+    if (!pointer) return;
+    if (pointer.touch) {
+      // A floating stick: drag from where the thumb landed, so the hand never
+      // has to cover the moth.
+      hold.set('touch', clamp((pointer.x - pointer.ox) / STICK), clamp((pointer.y - pointer.oy) / STICK));
+    } else {
+      const m = mothOnScreen();
+      hold.set('mouse', clamp((pointer.x - m.x) / REACH), clamp((pointer.y - m.y) / REACH));
+    }
+  };
+  const releaseEverything = () => { down.clear(); pointer = null; hold.releaseAll(); };
+
+  addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    onGesture('keys', e.code);
+    if (KEYS[e.code]) { down.add(e.code); keysVector(); e.preventDefault(); }
+  });
+  addEventListener('keyup', (e) => { if (down.delete(e.code)) keysVector(); });
+
+  target.addEventListener('pointerdown', (e) => {
+    // Touch is known from the first real touch, never guessed from feature
+    // sniffing, which misjudges laptops with touch screens.
+    const isTouch = e.pointerType === 'touch';
+    if (isTouch && !touch) { touch = true; onTouch(); }
+    if (pointer && pointer.id !== e.pointerId) return;
+    pointer = { id: e.pointerId, touch: isTouch, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
+    try { target.setPointerCapture(e.pointerId); } catch {}
+    onGesture(isTouch ? 'touch' : 'mouse');
+    pointerVector();
+    e.preventDefault();
+  });
+  target.addEventListener('pointermove', (e) => {
+    if (!pointer || pointer.id !== e.pointerId) return;
+    pointer.x = e.clientX; pointer.y = e.clientY;
+    pointerVector();
+  });
+  const up = (e) => {
+    if (!pointer || pointer.id !== e.pointerId) return;
+    hold.release(pointer.touch ? 'touch' : 'mouse');
+    pointer = null;
+  };
+  target.addEventListener('pointerup', up);
+  target.addEventListener('pointercancel', up);
+  target.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Losing focus or the tab is an implicit release: the keyup or pointerup
+  // that would have ended the hold may never arrive.
+  addEventListener('blur', releaseEverything);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseEverything(); });
+
+  return {
+    refresh: pointerVector,   // the moth moves under a still mouse
+    get stick() { return pointer && pointer.touch ? pointer : null; },
+    get touch() { return touch; },
+  };
+}
+
+function clamp(v) { return Math.max(-1, Math.min(1, v)); }
+
+// ---- audio.js
+// Sound starts only after a player gesture (browsers block it before), can be
+// muted, and the context is suspended while the page is hidden: a muted gain
+// still runs every node, only suspending stops the work.
+function createAudio({ muted = false } = {}) {
+  let ctx = null, master = null;
+  const FLOOR = 0.0001;   // an exponential ramp cannot reach zero
+
+  function unlock() {
+    if (ctx) { if (ctx.state === 'suspended' && !document.hidden) ctx.resume(); return; }
+    const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!AC) return;
+    try {
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 0.5;
+      master.connect(ctx.destination);
+    } catch { ctx = null; }
+  }
+
+  function tone(type, from, to, dur, vol, delay = 0) {
+    if (!ctx || muted) return;
+    const t = ctx.currentTime + delay;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(from, t);
+    o.frequency.exponentialRampToValueAtTime(to, t + dur);
+    g.gain.setValueAtTime(FLOOR, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(FLOOR, t + dur);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (!ctx) return;
+    if (document.hidden) ctx.suspend(); else ctx.resume();
+  });
+
+  return {
+    unlock,
+    get muted() { return muted; },
+    get state() { return ctx ? ctx.state : 'none'; },
+    setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : 0.5; },
+    play(type, n = 0) {
+      if (type === 'pollen') { const f = 660 * Math.pow(1.122, n % 6); tone('triangle', f, f * 1.5, 0.16, 0.5); }
+      else if (type === 'hit') { tone('sawtooth', 180, 50, 0.3, 0.6); tone('square', 90, 40, 0.22, 0.3); }
+      else if (type === 'warn') tone('sine', 1500, 1100, 0.09, 0.12);
+      else if (type === 'wave') { tone('sine', 330, 330, 0.25, 0.25); tone('sine', 495, 495, 0.35, 0.25, 0.12); }
+      else if (type === 'over') { tone('triangle', 440, 220, 0.5, 0.5); tone('triangle', 330, 110, 0.9, 0.4, 0.25); }
+    },
+  };
+}
+
+// ---- render.js
+// Drawing only. Nothing here feeds back into the simulation, so presentation
+// randomness and the frame clock are free to use.
+
+function createRenderer(canvas) {
+  const g = canvas.getContext('2d');
+  const view = { w: 900, h: 600, scale: 1, dpr: 1, cssW: 0, cssH: 0 };
+  const particles = [];
+  let shake = 0;
+
+  function fit() {
+    const dpr = globalThis.devicePixelRatio || 1;
+    view.dpr = dpr;
+    view.cssW = innerWidth; view.cssH = innerHeight;
+    canvas.width = Math.round(view.cssW * dpr);
+    canvas.height = Math.round(view.cssH * dpr);
+    // The same amount of meadow on any screen shape.
+    view.scale = Math.sqrt((view.cssW * view.cssH) / (900 * 600));
+    view.w = view.cssW / view.scale; view.h = view.cssH / view.scale;
+  }
+  // Checked every frame against the live values instead of waiting on events:
+  // a pixel-ratio change (a window dragged to another monitor) fires no
+  // resize, and the resolution media query's change event is not dependable
+  // either (it never fires under headless device emulation).
+  const stale = () => (globalThis.devicePixelRatio || 1) !== view.dpr || innerWidth !== view.cssW || innerHeight !== view.cssH;
+  fit();
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  function cellHash(x, y) {
+    let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  function burst(x, y, n, color, speed) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, v = speed * (0.3 + Math.random() * 0.7);
+      particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, color });
+    }
+  }
+
+  function onEvent(e, calm) {
+    if (e.type === 'pollen') burst(e.x, e.y, calm ? 4 : 16, '#ffd76a', 150);
+    if (e.type === 'hit') { burst(e.x, e.y, calm ? 5 : 22, '#ff6a5a', 240); if (!calm) shake = 12; }
+  }
+
+  function ground(cam) {
+    const S = 80;
+    const x0 = Math.floor((cam.x - view.w / 2) / S) - 1, x1 = Math.floor((cam.x + view.w / 2) / S) + 1;
+    const y0 = Math.floor((cam.y - view.h / 2) / S) - 1, y1 = Math.floor((cam.y + view.h / 2) / S) + 1;
+    g.lineCap = 'round';
+    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+      const r = cellHash(cx, cy), r2 = cellHash(cx + 91, cy - 37), r3 = cellHash(cx - 13, cy + 57);
+      const x = (cx + r) * S, y = (cy + r2) * S;
+      if (x < 0 || x > C.W || y < 0 || y > C.H) continue;
+      if (r3 < 0.14) {           // a flower
+        g.fillStyle = r3 < 0.07 ? '#8f7fd6' : '#d98fb4';
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2 + r * 6;
+          g.beginPath(); g.arc(x + Math.cos(a) * 5, y + Math.sin(a) * 5, 3.4, 0, 7); g.fill();
+        }
+        g.fillStyle = '#f2e3a0'; g.beginPath(); g.arc(x, y, 2.6, 0, 7); g.fill();
+      } else {                   // a tuft of grass
+        g.strokeStyle = r3 < 0.55 ? '#2f6b4a' : '#3f8358';
+        g.lineWidth = 2.2;
+        g.beginPath();
+        for (let k = -1; k <= 1; k++) { g.moveTo(x + k * 4, y); g.lineTo(x + k * 9 + (r - 0.5) * 6, y - 10 - r2 * 9); }
+        g.stroke();
+      }
+    }
+    // The hedge round the meadow.
+    g.strokeStyle = '#1d4a35'; g.lineWidth = 26; g.lineJoin = 'round';
+    g.strokeRect(-13, -13, C.W + 26, C.H + 26);
+    g.strokeStyle = '#2c6b4b'; g.lineWidth = 6;
+    g.strokeRect(-3, -3, C.W + 6, C.H + 6);
+  }
+
+  function wings(x, y, ang, flap, span, depth, fill) {
+    g.save(); g.translate(x, y); g.rotate(ang);
+    g.fillStyle = fill;
+    for (const side of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(2, 0);
+      g.quadraticCurveTo(depth * 0.4, side * span * flap, -depth * 0.2, side * span * flap);
+      g.quadraticCurveTo(-depth, side * span * flap * 0.7, -depth * 0.5, 0);
+      g.closePath(); g.fill();
+    }
+    g.restore();
+  }
+
+  // The two markers differ in shape, not only colour, so they stay apart for
+  // eyes that confuse red and gold: a round grain for pollen, a barb for a bat.
+  function edgeMarker(sx, sy, color, size, round) {
+    const cx = view.cssW / 2, cy = view.cssH / 2, pad = 22;
+    const dx = sx - cx, dy = sy - cy;
+    const k = Math.min((cx - pad) / Math.abs(dx || 1e-6), (cy - pad) / Math.abs(dy || 1e-6));
+    if (k >= 1) return;
+    g.save(); g.translate(cx + dx * k, cy + dy * k); g.rotate(Math.atan2(dy, dx));
+    g.fillStyle = color;
+    g.beginPath();
+    if (round) g.arc(0, 0, size * 0.55, 0, 7);
+    else { g.moveTo(size, 0); g.lineTo(-size * 0.7, -size * 0.75); g.lineTo(-size * 0.3, 0); g.lineTo(-size * 0.7, size * 0.75); g.closePath(); }
+    g.fill(); g.restore();
+  }
+
+  function draw(s, alpha, cam, time, frameDt, opts) {
+    if (stale()) fit();
+    const { dpr, scale } = view, k = dpr * scale;
+    const m = s.moth, mx = lerp(m.px, m.x, alpha), my = lerp(m.py, m.y, alpha);
+    let ox = 0, oy = 0;
+    if (shake > 0.3 && !opts.calm) { ox = (Math.random() - 0.5) * shake; oy = (Math.random() - 0.5) * shake; shake *= Math.pow(0.002, frameDt); } else shake = 0;
+    const world = () => g.setTransform(k, 0, 0, k, (view.cssW / 2 - (cam.x + ox) * scale) * dpr, (view.cssH / 2 - (cam.y + oy) * scale) * dpr);
+    const toScreen = (x, y) => ({ x: view.cssW / 2 + (x - cam.x) * scale, y: view.cssH / 2 + (y - cam.y) * scale });
+
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#05080f'; g.fillRect(0, 0, canvas.width, canvas.height);
+    world();
+    g.fillStyle = '#143326'; g.fillRect(0, 0, C.W, C.H);
+    ground(cam);
+
+    // Bat bodies sit under the darkness: only the light shows them whole.
+    for (const b of s.bats) {
+      if (b.warm > 0) continue;
+      const bx = lerp(b.px, b.x, alpha), by = lerp(b.py, b.y, alpha);
+      g.globalAlpha = b.leaving ? 0.45 : 1;
+      const ang = Math.atan2(b.vy, b.vx), flap = 0.55 + 0.45 * Math.sin(time * 16 + b.id);
+      wings(bx, by, ang, flap, 30, 24, '#6a4f8c');
+      g.fillStyle = '#2b1f40'; g.beginPath(); g.ellipse(bx, by, 12, 7.5, ang, 0, 7); g.fill();
+      g.globalAlpha = 1;
+    }
+
+    // Darkness, opened by the moth's light. The light shrinks as it burns down.
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const ms = toScreen(mx - ox, my - oy);
+    const flicker = opts.calm ? 0 : Math.sin(time * 9) * 4 + Math.sin(time * 23) * 2;
+    const R = (110 + 330 * s.glow + flicker) * scale;
+    const dark = g.createRadialGradient(ms.x, ms.y, R * 0.15, ms.x, ms.y, R);
+    dark.addColorStop(0, 'rgba(4,6,14,0)');
+    dark.addColorStop(0.55, 'rgba(4,6,14,0.45)');
+    dark.addColorStop(1, 'rgba(4,6,14,0.95)');
+    g.fillStyle = dark; g.fillRect(0, 0, view.cssW, view.cssH);
+    const warm = g.createRadialGradient(ms.x, ms.y, 0, ms.x, ms.y, R * 0.6);
+    warm.addColorStop(0, `rgba(255,196,96,${0.10 + 0.14 * s.glow})`);
+    warm.addColorStop(1, 'rgba(255,196,96,0)');
+    g.globalCompositeOperation = 'lighter';
+    g.fillStyle = warm; g.fillRect(0, 0, view.cssW, view.cssH);
+
+    // Everything that carries its own light, drawn over the dark.
+    world();
+    for (const p of s.pollen) {
+      const pulse = 1 + 0.18 * Math.sin(time * 3 + p.id);
+      const halo = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, 30 * pulse);
+      halo.addColorStop(0, 'rgba(255,224,130,0.95)');
+      halo.addColorStop(0.25, 'rgba(255,200,90,0.45)');
+      halo.addColorStop(1, 'rgba(255,190,80,0)');
+      g.fillStyle = halo; g.beginPath(); g.arc(p.x, p.y, 30 * pulse, 0, 7); g.fill();
+    }
+    g.globalCompositeOperation = 'source-over';
+    for (const b of s.bats) {
+      if (b.leaving) continue;
+      const bx = lerp(b.px, b.x, alpha), by = lerp(b.py, b.y, alpha);
+      if (b.warm > 0) {     // the warning: a ring closing on where the bat wakes
+        const t = b.warm / C.BAT_WARM;
+        g.strokeStyle = `rgba(255,90,80,${0.9 - 0.5 * t})`; g.lineWidth = 3;
+        g.beginPath(); g.arc(bx, by, 14 + 40 * t, 0, 7); g.stroke();
+      }
+      const dx = m.x - b.x, dy = m.y - b.y, d = Math.hypot(dx, dy) || 1;
+      const ang = b.warm > 0 ? Math.atan2(dy, dx) : Math.atan2(b.vy, b.vx);
+      g.fillStyle = '#ff5a4f';
+      for (const side of [-1, 1]) {
+        g.beginPath();
+        g.arc(bx + Math.cos(ang) * 6 - Math.sin(ang) * 3.4 * side, by + Math.sin(ang) * 6 + Math.cos(ang) * 3.4 * side, 2.1, 0, 7);
+        g.fill();
+      }
+    }
+
+    // The moth.
+    const sp = Math.hypot(m.vx, m.vy);
+    const ang = sp > 8 ? Math.atan2(m.vy, m.vx) : -Math.PI / 2;
+    const blink = m.safe > 0 && Math.floor(time * 14) % 2 === 0;
+    if (!blink || opts.calm) {
+      g.globalAlpha = m.safe > 0 && opts.calm ? 0.55 : 1;
+      const flap = 0.45 + 0.55 * Math.abs(Math.sin(time * (opts.calm ? 9 : 22)));
+      wings(mx, my, ang, flap, 23, 22, '#f4e2b8');
+      wings(mx, my, ang, flap * 0.8, 13, 13, '#e2b877');
+      g.fillStyle = '#6b4a2a'; g.beginPath(); g.ellipse(mx, my, 11, 5, ang, 0, 7); g.fill();
+      g.fillStyle = '#fff3c4'; g.beginPath(); g.arc(mx - Math.cos(ang) * 8, my - Math.sin(ang) * 8, 3.6 + 2.4 * s.glow, 0, 7); g.fill();
+      g.globalAlpha = 1;
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= frameDt * 1.8;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      p.x += p.vx * frameDt; p.y += p.vy * frameDt; p.vx *= 0.96; p.vy *= 0.96;
+      g.globalAlpha = p.life; g.fillStyle = p.color;
+      g.beginPath(); g.arc(p.x, p.y, 2.6 * p.life + 0.6, 0, 7); g.fill();
+    }
+    g.globalAlpha = 1;
+
+    // Screen space: where the off-screen things are, and the thumb stick.
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const near = [...s.pollen].sort((a, b) => Math.hypot(a.x - m.x, a.y - m.y) - Math.hypot(b.x - m.x, b.y - m.y)).slice(0, 3);
+    for (const p of near) { const q = toScreen(p.x, p.y); edgeMarker(q.x, q.y, 'rgba(255,214,110,0.9)', 9, true); }
+    for (const b of s.bats) { if (!b.leaving) { const q = toScreen(b.x, b.y); edgeMarker(q.x, q.y, 'rgba(255,90,80,0.95)', 12, false); } }
+    if (opts.stick) {
+      const st = opts.stick;
+      g.strokeStyle = 'rgba(255,255,255,0.28)'; g.lineWidth = 2;
+      g.beginPath(); g.arc(st.ox, st.oy, 56, 0, 7); g.stroke();
+      const dx = st.x - st.ox, dy = st.y - st.oy, d = Math.hypot(dx, dy) || 1, c = Math.min(1, 56 / d);
+      g.fillStyle = 'rgba(255,255,255,0.4)';
+      g.beginPath(); g.arc(st.ox + dx * c, st.oy + dy * c, 20, 0, 7); g.fill();
+    }
+    return ms;
+  }
+
+  return { draw, view, onEvent, clear() { particles.length = 0; shake = 0; } };
+}
+
+// ---- save.js
+// Settings and best score. Keys are namespaced because the page may share its
+// web origin with other projects, and every access is wrapped because storage
+// can throw (private mode, blocked site data, a full quota).
+const PREFIX = 'bst1.glowmoth.';
+
+function load(key, fallback, store = globalThis.localStorage) {
+  try {
+    const raw = store.getItem(PREFIX + key);
+    return raw === null || raw === undefined ? fallback : JSON.parse(raw);
+  } catch { return fallback; }
+}
+
+function save(key, value, store = globalThis.localStorage) {
+  try { store.setItem(PREFIX + key, JSON.stringify(value)); return true; } catch { return false; }
+}
+
+// ---- main.js
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const fixedSeed = params.get('seed');
+const newSeed = () => fixedSeed || Date.now().toString(36);
+
+const canvas = $('game');
+const renderer = createRenderer(canvas);
+const hold = createHold();
+const audio = createAudio({ muted: load('muted', false) });
+// Calm motion follows the system setting until the player chooses otherwise.
+let calm = load('calm', matchMedia('(prefers-reduced-motion: reduce)').matches);
+let best = load('best', 0);
+
+let world = createWorld(newSeed());
+let cam = { x: world.moth.x, y: world.moth.y };
+let mode = 'title';
+let overAt = 0, mothScreen = { x: innerWidth / 2, y: innerHeight / 2 }, time = 0, chain = 0;
+let wasRest = true;
+
+function begin() {
+  // A new run starts from a new world, made before anything is shown, so
+  // nothing of the last run carries over.
+  world = createWorld(newSeed());
+  cam = { x: world.moth.x, y: world.moth.y };
+  renderer.clear();
+  chain = 0; wasRest = true;
+  mode = 'play';
+  $('overlay').hidden = true;
+  hud();
+}
+
+function hud() {
+  $('score').textContent = `Pollen ${world.score}`;
+  $('best').textContent = `Best ${Math.max(best, world.score)}`;
+  $('glow').style.width = `${Math.round(world.glow * 100)}%`;
+  $('glow').classList.toggle('low', world.glow < 0.3);
+}
+
+function banner(text) {
+  const b = $('banner');
+  b.textContent = text;
+  b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+}
+
+function tick() {
+  if (mode !== 'play') return;
+  input.refresh();
+  step(world, hold.vector());
+  for (const e of world.events) {
+    renderer.onEvent(e, calm);
+    if (e.type === 'pollen') audio.play('pollen', chain++);
+    else if (e.type === 'hit') { audio.play('hit'); chain = 0; }
+    else if (e.type === 'warn') audio.play('warn');
+    else if (e.type === 'wave') { audio.play('wave'); banner(`Wave ${e.wave + 1}`); }
+    else if (e.type === 'over') {
+      audio.play('over');
+      mode = 'over'; overAt = performance.now();
+      $('banner').classList.remove('show');
+      if (world.score > best) { best = world.score; save('best', best); }
+      $('title').textContent = 'The light went out';
+      $('line').textContent = `You gathered ${world.score} pollen and lasted ${Math.round(world.tick * C.TICK)} seconds. Best ${best}.`;
+      $('hint').textContent = input.touch ? 'Tap to fly again' : 'Press a key or click to fly again';
+      $('overlay').hidden = false;
+    }
+  }
+  const rest = waveAt(world.tick).rest;
+  if (rest && !wasRest && mode === 'play') banner('The bats scatter');
+  wasRest = rest;
+  cam = followCamera(cam, world.moth, renderer.view, { w: C.W, h: C.H });
+  hud();
+}
+
+const loop = createLoop({
+  dt: C.TICK,
+  step: tick,
+  render(alpha, frameDt) {
+    time += frameDt;
+    mothScreen = renderer.draw(world, mode === 'play' ? alpha : 1, cam, time, frameDt, { calm, stick: input.stick });
+  },
+});
+
+const input = bindInput(canvas, hold, {
+  mothOnScreen: () => mothScreen,
+  onGesture(source, code) {
+    audio.unlock();
+    if (code === 'KeyM') return toggleSound();
+    if (mode === 'title') begin();
+    else if (mode === 'over' && performance.now() - overAt > 700) begin();
+  },
+  onTouch() {
+    document.body.classList.add('touch');
+    if (mode === 'title') $('hint').textContent = 'Drag anywhere to fly';
+  },
+});
+
+function toggleSound() {
+  audio.setMuted(!audio.muted);
+  save('muted', audio.muted);
+  labels();
+}
+function labels() {
+  $('sound').textContent = audio.muted ? 'Sound off' : 'Sound on';
+  $('sound').setAttribute('aria-pressed', String(!audio.muted));
+  $('motion').textContent = calm ? 'Motion calm' : 'Motion full';
+  $('motion').setAttribute('aria-pressed', String(calm));
+}
+$('sound').addEventListener('click', (e) => { audio.unlock(); toggleSound(); e.currentTarget.blur(); });
+$('motion').addEventListener('click', (e) => { calm = !calm; save('calm', calm); labels(); e.currentTarget.blur(); });
+labels(); hud();
+
+requestAnimationFrame(function frame(now) { loop.frame(now); requestAnimationFrame(frame); });
+
+// For tests: the game's own tick and state, so nothing has to wait on a clock.
+window.__game = {
+  get tick() { return world.tick; },
+  get mode() { return mode; },
+  get touch() { return input.touch; },
+  get seen() { return hold.seen; },
+  hold,
+  get audio() { return audio.state; },
+  get calm() { return calm; },
+  state: () => JSON.parse(JSON.stringify(world)),
+  camera: () => ({ ...cam }),
+  view: () => ({ ...renderer.view }),
+  stepBy: (n) => loop.stepBy(n),
+  resume: () => loop.resume(),
+  replay(seed, ticks) {
+    const w = createWorld(seed);
+    for (let i = 0; i < ticks && !w.over; i++) step(w, botInput(w));
+    return fingerprint(w);
+  },
+};
+</script>
