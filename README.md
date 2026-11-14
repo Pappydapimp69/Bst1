@@ -6,7 +6,7 @@ it. The bats come in waves that build and then scatter; your light burns faster
 each wave, so every run ends and leaves a score to beat.
 
 Fly by holding the mouse toward where you want to go, dragging a thumb anywhere
-on a touch screen, or with the arrow keys or WASD. M mutes the sound.
+on a touch screen, with the arrow keys or WASD, or with a controller's left stick or d-pad. M mutes the sound.
 
 ## Run it
 

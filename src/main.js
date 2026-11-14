@@ -68,7 +68,7 @@ function tick() {
       if (world.score > best) { best = world.score; save('best', best); }
       $('title').textContent = 'The light went out';
       $('line').textContent = `You gathered ${world.score} pollen and lasted ${Math.round(world.tick * C.TICK)} seconds. Best ${best}.`;
-      $('hint').textContent = input.touch ? 'Tap to fly again' : 'Press a key or click to fly again';
+      $('hint').textContent = input.touch ? 'Tap to fly again' : 'Press a key, a button, or click to fly again';
       $('overlay').hidden = false;
     }
   }
@@ -84,6 +84,7 @@ const loop = createLoop({
   step: tick,
   render(alpha, frameDt) {
     time += frameDt;
+    input.pollPad();
     mothScreen = renderer.draw(world, mode === 'play' ? alpha : 1, cam, time, frameDt, { calm, stick: input.stick });
   },
 });

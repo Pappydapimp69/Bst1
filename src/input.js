@@ -25,6 +25,7 @@ const KEYS = {
 };
 const STICK = 56;    // CSS px of thumb travel for full thrust
 const REACH = 90;    // CSS px from the moth for full thrust with a mouse
+const DEAD = 0.2;    // stick travel ignored round the centre, so a worn stick does not drift
 
 export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
   const down = new Set();
@@ -87,8 +88,36 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
   addEventListener('blur', releaseEverything);
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseEverything(); });
 
+  // A controller is a fourth source on the same hold controller. It has no
+  // events for sticks, so it is polled once a frame: the left stick or the
+  // d-pad steers, and the first press or push counts as the gesture that
+  // starts a run.
+  let padActive = false;
+  function pollPad() {
+    let pads;
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : []; } catch { return; }
+    let x = 0, y = 0, pressed = false;
+    for (const p of pads || []) {
+      if (!p || !p.connected) continue;
+      const ax = p.axes[0] || 0, ay = p.axes[1] || 0, m = Math.hypot(ax, ay);
+      if (m > DEAD) { const k = Math.min(1, (m - DEAD) / (1 - DEAD)) / m; x += ax * k; y += ay * k; }
+      const b = p.buttons || [];
+      const on = (i) => Boolean(b[i] && b[i].pressed);
+      if (on(14)) x -= 1;
+      if (on(15)) x += 1;
+      if (on(12)) y -= 1;
+      if (on(13)) y += 1;
+      for (let i = 0; i < b.length; i++) if (on(i)) pressed = true;
+    }
+    const steering = x !== 0 || y !== 0, active = steering || pressed;
+    if (active && !padActive) onGesture('pad');
+    padActive = active;
+    if (steering) hold.set('pad', clamp(x), clamp(y)); else hold.release('pad');
+  }
+
   return {
     refresh: pointerVector,   // the moth moves under a still mouse
+    pollPad,
     get stick() { return pointer && pointer.touch ? pointer : null; },
     get touch() { return touch; },
   };
