@@ -28,7 +28,7 @@ meta.rings = Math.max(0, Math.min(RINGS.length, meta.rings | 0));
 meta.castles |= 0;
 if (!Array.isArray(meta.best)) meta.best = [];
 // The crab's home shell, its garrison and anemones waiting for a guard.
-meta.shell = Math.max(1, meta.shell | 0);
+meta.shell = Math.max(0, meta.shell | 0);            // a new crab has no shell yet
 if (!Array.isArray(meta.crabs)) meta.crabs = [];
 meta.spare |= 0;
 // Broad back became the home shell: hand back what was spent on it.
@@ -78,7 +78,7 @@ function hud() {
   $('count').textContent = `${world.built} / ${C.NEED}`;
   $('ringname').textContent = complete() ? 'Castle complete' : `Ring ${world.ring + 1} of ${RINGS.length}: ${RINGS[world.ring].name}`;
   const armed = world.guards.filter((g) => g.armed).length;
-  $('garrison').textContent = `Shell size ${world.shell} · ${world.guards.length} guard${world.guards.length === 1 ? '' : 's'}${armed ? `, ${armed} armed` : ''}`;
+  $('garrison').textContent = `${world.shell ? `Shell size ${world.shell}` : 'No shell yet'} · ${world.guards.length} guard${world.guards.length === 1 ? '' : 's'}${armed ? `, ${armed} armed` : ''}`;
   const u = tideAt(world).u;
   $('tide').style.width = `${Math.round(u * 100)}%`;
   $('bar').classList.toggle('close', u > 0.75 && world.phase === 'play');
@@ -140,7 +140,7 @@ function tick() {
     else if (e.type === 'wind') { input.clearPath(); hold.release('touch'); }   // the crab stops: get out of the ring
     else if (e.type === 'tide') banner('The tide is coming in');
     else if (e.type === 'vacancy') banner('A big empty shell washed up');
-    else if (e.type === 'chain') banner(e.grew ? `A bigger shell, and ${e.joined} crab${e.joined === 1 ? '' : 's'} join your castle` : `${e.joined} crab${e.joined === 1 ? '' : 's'} join your castle`);
+    else if (e.type === 'chain') banner(!e.joined ? 'A shell of your own' : e.grew ? (e.moved ? 'Everyone moves up, and a new crab joins' : 'A new crab moves into your old shell') : 'Your garrison moves up, and a new crab joins');
     else if (e.type === 'chainlost') banner('Another crab took the shell');
     else if (e.type === 'anemonewash') banner('An anemone washed up');
     else if (e.type === 'arm') banner(e.id ? 'A guard takes up the anemone' : 'The anemone waits for a guard');

@@ -19,12 +19,12 @@ export const C = {
   WIND: 48, DIVE_SPEED: 300, GAP: 150, HIT_R: 18, HIT_PER_SHELL: 6,
   COOL: 270, COOL_PER_SHELL: 0.5, REST: 480,
   RING_DROP: 70,
-  // The crab's home shell: each size up carries one more but is slower and
-  // a bigger target.
+  // The crab's home shell: it starts with none, and each size up carries one
+  // more but is slower and a bigger target.
   SHELL_MAX: 4, SHELL_SLOW: 0.04, SHELL_HIT: 3,
-  // A bigger empty shell washes up once a run, with a line of crabs waiting
-  // behind it; reach it with empty claws before the first of them gives up.
-  VAC_TICKS: 720, LINE: 2,
+  // A bigger empty shell washes up once a run, with a wild crab waiting by
+  // it; reach it with empty claws before that crab gives up waiting.
+  VAC_TICKS: 720,
   // The garrison: crabs who joined the castle. A guard takes as many pecks as
   // its shell is big, then is stunned until it recovers.
   GUARDS_MAX: 8, GUARD_RECOVER: 1200,
@@ -69,11 +69,11 @@ export const UPGRADES = [
 ];
 export function crabStats(up = {}, shell = 1) {
   const lv = (id) => Math.max(0, Math.min(3, up[id] | 0));
-  const big = Math.max(1, Math.min(C.SHELL_MAX, shell | 0)) - 1;
+  const sh = Math.max(0, Math.min(C.SHELL_MAX, shell | 0)), big = Math.max(0, sh - 1);
   return {
     pickR: C.PICK_R + 6 * lv('reach'),
     loadSlow: C.LOAD_SLOW * (1 - 0.25 * lv('legs')),
-    maxCarry: C.MAX_CARRY + big,
+    maxCarry: C.MAX_CARRY - 1 + sh,                 // a bare crab carries one less
     shellSlow: 1 - C.SHELL_SLOW * big,
     hitBase: C.HIT_R + C.SHELL_HIT * big,
     keep: lv('grip'),
@@ -92,7 +92,7 @@ export function createWorld(seed, upgrades = {}, ring = 0, home = {}) {
     seed: String(seed), tick: 0, phase: 'wait', startTick: 0, endTick: 0,
     rng: { wash: makeStream(seed, 'wash'), gulls: makeStream(seed, 'gulls'), finds: makeStream(seed, 'finds') },
     crab: { x: C.CASTLE_X, y: gy + 200, px: C.CASTLE_X, py: gy + 200, vx: 0, vy: 0, fx: 0, fy: 1, stun: 0 },
-    up: upgrades, shell: Math.max(1, Math.min(C.SHELL_MAX, home.shell | 0 || 1)),
+    up: upgrades, shell: Math.max(0, Math.min(C.SHELL_MAX, home.shell | 0)),
     guards: [], spare: home.spare | 0, vacancy: null, anemone: null, carryAnemone: false,
     k: null, carry: 0, built: 0, shells: [], gulls: [], rest: 0, gap: 0, nextId: 1, events: [],
     // Where the gulls think the crab is: a point that trails behind it, so a
@@ -257,9 +257,8 @@ export function step(s, input) {
   // Finds.
   const el = s.tick - s.startTick;
   if (el === s.vacAt) {
-    const size = Math.min(C.SHELL_MAX, s.shell + 1), line = [];
-    for (let i = 0; i < C.LINE; i++) line.push(Math.max(1, size - 2 - i));
-    s.vacancy = { x: 90 + next(s.rng.finds) * (C.W - 180), y: Math.max(s.foot + 70, tide.calm - 55), size, t: C.VAC_TICKS, line };
+    const size = Math.min(C.SHELL_MAX, s.shell + 1);
+    s.vacancy = { x: 90 + next(s.rng.finds) * (C.W - 180), y: Math.max(s.foot + 70, tide.calm - 55), size, t: C.VAC_TICKS, line: [Math.max(1, size - 1)] };
     s.events.push({ type: 'vacancy', x: s.vacancy.x, y: s.vacancy.y });
   }
   if (el === s.anemAt) {
@@ -270,13 +269,21 @@ export function step(s, input) {
   if (v) {
     v.t--;
     if (s.carry === 0 && c.stun === 0 && Math.hypot(c.x - v.x, c.y - v.y) < C.PICK_R + 14) {
-      // The chain: the crab moves up, each crab in line takes the shell left
-      // by the one ahead, and the whole line follows it home to the castle.
+      // A vacancy chain: the crab moves into the new shell, its old shell goes
+      // to the biggest guard, each guard takes the shell left by the one ahead,
+      // and the smallest shell left over houses one new crab. A bare crab
+      // leaves nothing behind, so its first shell is simply its own.
+      const pool = [];
       const grew = v.size > s.shell;
-      if (grew) { s.shell = v.size; s.k = crabStats(s.up, s.shell); }
-      let joined = 0;
-      for (const sz of v.line) if (addGuard(s, sz + 1, s.ring > 0 ? s.ring - 1 : 0)) joined++;
-      s.events.push({ type: 'chain', x: v.x, y: v.y, grew, joined, size: s.shell });
+      if (grew) { if (s.shell > 0) pool.push(s.shell); s.shell = v.size; s.k = crabStats(s.up, s.shell); }
+      else pool.push(v.size);                               // already as big as it gets: the shell goes to the castle
+      const order = [...s.guards].sort((a, b) => b.size - a.size);
+      for (const q of order) pool.push(q.size);
+      pool.sort((a, b) => b - a);
+      order.forEach((q, i) => { const sz = pool[i]; if (sz > q.size) { if (q.stun === 0) q.hp += sz - q.size; q.size = sz; } });
+      const left = pool[order.length];
+      const joined = left > 0 && addGuard(s, left, s.ring > 0 ? s.ring - 1 : 0) ? 1 : 0;
+      s.events.push({ type: 'chain', x: v.x, y: v.y, grew, joined, moved: order.length, size: s.shell });
       s.vacancy = null;
     } else if (v.t <= 0 || v.y > tide.calm + C.SWEPT_DEPTH) {
       s.events.push({ type: 'chainlost', x: v.x, y: v.y });

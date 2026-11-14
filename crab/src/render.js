@@ -42,7 +42,7 @@ export function createRenderer(canvas) {
     if (e.type === 'peck') burst(e.x, e.y - 6, Math.ceil(4 * k), ['#fff6dc', '#e9c9a0'], 90);
     if (e.type === 'sting') burst(e.x, e.y - 10, Math.ceil(16 * k), ['#e0457b', '#f27aa2', '#fff6dc'], 220);
     if (e.type === 'shoo') burst(e.x, e.y, Math.ceil(10 * k), ['#fbfbf7', '#b9c2c9'], 180);
-    if (e.type === 'chain') { burst(e.x, e.y, Math.ceil(30 * k), ['#e9c9a0', '#fff6dc', '#f6e39b'], 220); popups.push({ x: e.x, y: e.y - 40, text: '+' + e.joined + ' crabs', life: 1, color: '#2f7d4f' }); }
+    if (e.type === 'chain') { burst(e.x, e.y, Math.ceil(30 * k), ['#e9c9a0', '#fff6dc', '#f6e39b'], 220); if (e.joined) popups.push({ x: e.x, y: e.y - 40, text: '+1 crab', life: 1, color: '#2f7d4f' }); }
     if (e.type === 'miss') burst(e.x, e.y, Math.ceil(7 * k), ['#e7d3a0', '#d6bf86'], 110);
     if (e.type === 'tier') burst(goal.x, goal.y - 30, Math.ceil(40 * k), ['#fff6dc', '#f6e39b', '#f4a99a', '#9fd3c7'], 260);
     if (e.type === 'won') burst(goal.x, goal.y - 60, Math.ceil(90 * k), ['#e2553d', '#f6e39b', '#3aa6b9', '#fff6dc', '#c9a3d6'], 340);
@@ -193,7 +193,7 @@ export function createRenderer(canvas) {
     const step = Math.sin(walk * 0.22);
     g.save(); g.translate(x, y);
     if (stunned && !calm) g.rotate(Math.sin(time * 30) * 0.18);
-    homeShell(-c.fx * 9, -c.fy * 7 + 2, s.shell || 1, 0.9);
+    if (s.shell) homeShell(-c.fx * 9, -c.fy * 7 + 2, s.shell, 0.9);
     g.strokeStyle = INK; g.lineWidth = 2.2; g.lineCap = 'round';
     for (const side of [-1, 1]) for (let k = -1; k <= 1; k++) {      // legs
       const sw = step * 4 * (k === 0 ? -1 : 1) * side;
@@ -215,7 +215,7 @@ export function createRenderer(canvas) {
     }
     // The load, stacked on its back where both the player and the gulls can see it.
     const lean = Math.max(-1, Math.min(1, -c.vx / 200));
-    const top = (s.shell || 1) * 4;
+    const top = (s.shell || 0) * 4;
     for (let i = 0; i < s.carry; i++) {
       if (s.carryAnemone && i === s.carry - 1) anemone(lean * i * 2.2, -16 - top - i * 9.5, 0.9, false, calm ? 0 : time);
       else shell(lean * i * 2.2, -14 - top - i * 9.5, i + 1, 10);
