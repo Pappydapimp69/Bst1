@@ -13,3 +13,20 @@ export function load(key, fallback, store = globalThis.localStorage) {
 export function save(key, value, store = globalThis.localStorage) {
   try { store.setItem(PREFIX + key, JSON.stringify(value)); return true; } catch { return false; }
 }
+
+// The same two calls under another project's prefix, for other games that
+// share this engine and this web origin.
+export function createStore(prefix, store) {
+  const at = () => store || globalThis.localStorage;
+  return {
+    load(key, fallback) {
+      try {
+        const raw = at().getItem(prefix + key);
+        return raw === null || raw === undefined ? fallback : JSON.parse(raw);
+      } catch { return fallback; }
+    },
+    save(key, value) {
+      try { at().setItem(prefix + key, JSON.stringify(value)); return true; } catch { return false; }
+    },
+  };
+}

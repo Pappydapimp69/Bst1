@@ -24,3 +24,20 @@ random streams from `src/rng.js`; the same seed and inputs give the same run in
 Node and in a browser. Everything else (`loop`, `input`, `camera`, `render`,
 `audio`, `save`) is the browser around it. `src/bot.js` is a player good enough
 to calibrate the balance against.
+
+# Crab Castle
+
+A second game on the same engine, in `crab/`. A crab carries shells up the
+beach to build a sandcastle before the tide reaches it, and unlike Glowmoth it
+can be won. The whole game turns on how many shells to carry at once: each one
+builds the castle faster, but slows the crab, makes it a bigger target, brings
+the gulls down sooner, and is lost with the rest if a gull connects. Gulls only
+trouble a crab that is carrying, and they scatter each time a tier is finished.
+
+    npm run serve        # then open /crab/ at the address it prints
+    npm run tournament   # every habit of play over the same seeds
+
+The tournament is the design check: it is tuned, and pinned by a test, so that
+no fixed habit such as always carrying three wins, and reading the sky does. A
+throw-a-shell-as-a-lure button was built and cut because the tournament showed
+it was never the better choice.

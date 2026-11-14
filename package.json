@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
-    "play": "node tests/play.mjs",
+    "test": "node --test tests/*.test.mjs crab/tests/*.test.mjs",
+    "play": "node tests/play.mjs && node crab/tests/play.mjs",
     "balance": "node tools/balance.mjs",
     "serve": "node tools/serve.mjs",
-    "bundle": "node tools/bundle.mjs"
+    "bundle": "node tools/bundle.mjs glowmoth && node tools/bundle.mjs crab",
+    "tournament": "node crab/tools/tournament.mjs"
   }
 }

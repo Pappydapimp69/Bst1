@@ -45,7 +45,7 @@
   </div>
 </div>
 <script type="module">
-// ---- rng.js
+// ---- src/rng.js
 // Seeded random streams. Each consumer gets its own stream keyed by a stable
 // name, so adding a consumer never shifts another's draws. A stream's whole
 // state is four integer words, so it saves as plain JSON.
@@ -84,7 +84,7 @@ function next(s) {
   return (t >>> 0) / 4294967296;
 }
 
-// ---- sim.js
+// ---- src/sim.js
 // The whole game as a pure simulation on a fixed tick. No wall clock, no
 // ambient randomness, no DOM: the same seed and inputs give the same run in
 // Node and in a browser. tests/sim.test.mjs scans this file to keep it so.
@@ -237,7 +237,7 @@ function fingerprint(s) {
   return h >>> 0;
 }
 
-// ---- bot.js
+// ---- src/bot.js
 // A player that plays well enough to calibrate the game against and to drive
 // replays. It reads the world and returns a held direction; it draws no
 // random numbers, so it cannot disturb the run it is measuring.
@@ -287,7 +287,7 @@ function botInput(s) {
   return { x: best[0], y: best[1] };
 }
 
-// ---- loop.js
+// ---- src/loop.js
 // Fixed-step loop fed by an accumulator. A frame's elapsed time is capped so a
 // stall cannot snowball into catch-up steps; leftover time carries over and
 // the picture is blended between the last two states by `alpha`.
@@ -314,7 +314,7 @@ function createLoop({ dt, step, render, maxFrame = 0.25 }) {
   };
 }
 
-// ---- camera.js
+// ---- src/camera.js
 // A follow camera that holds still while the target is inside a dead-zone box
 // and moves only when the target reaches the box's edge.
 function followCamera(cam, target, view, world, zone = 0.22) {
@@ -330,7 +330,7 @@ function followCamera(cam, target, view, world, zone = 0.22) {
   return { x: cx, y: cy };
 }
 
-// ---- input.js
+// ---- src/input.js
 // One hold controller for every input method. Keys, mouse and touch each hold
 // a direction under their own source name; the game reads a single vector, so
 // nothing can be held by a pointer that a keyboard cannot also hold.
@@ -458,7 +458,7 @@ function bindInput(target, hold, { mothOnScreen, onGesture, onTouch }) {
 
 function clamp(v) { return Math.max(-1, Math.min(1, v)); }
 
-// ---- audio.js
+// ---- src/audio.js
 // Sound starts only after a player gesture (browsers block it before), can be
 // muted, and the context is suspended while the page is hidden: a muted gain
 // still runs every node, only suspending stops the work.
@@ -499,6 +499,7 @@ function createAudio({ muted = false } = {}) {
 
   return {
     unlock,
+    tone,      // for other games on this engine to voice their own sounds
     get muted() { return muted; },
     get state() { return ctx ? ctx.state : 'none'; },
     setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : 0.5; },
@@ -512,7 +513,7 @@ function createAudio({ muted = false } = {}) {
   };
 }
 
-// ---- render.js
+// ---- src/render.js
 // Drawing only. Nothing here feeds back into the simulation, so presentation
 // randomness and the frame clock are free to use.
 
@@ -731,7 +732,7 @@ function createRenderer(canvas) {
   return { draw, view, onEvent, clear() { particles.length = 0; shake = 0; } };
 }
 
-// ---- save.js
+// ---- src/save.js
 // Settings and best score. Keys are namespaced because the page may share its
 // web origin with other projects, and every access is wrapped because storage
 // can throw (private mode, blocked site data, a full quota).
@@ -748,7 +749,24 @@ function save(key, value, store = globalThis.localStorage) {
   try { store.setItem(PREFIX + key, JSON.stringify(value)); return true; } catch { return false; }
 }
 
-// ---- main.js
+// The same two calls under another project's prefix, for other games that
+// share this engine and this web origin.
+function createStore(prefix, store) {
+  const at = () => store || globalThis.localStorage;
+  return {
+    load(key, fallback) {
+      try {
+        const raw = at().getItem(prefix + key);
+        return raw === null || raw === undefined ? fallback : JSON.parse(raw);
+      } catch { return fallback; }
+    },
+    save(key, value) {
+      try { at().setItem(prefix + key, JSON.stringify(value)); return true; } catch { return false; }
+    },
+  };
+}
+
+// ---- src/main.js
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);

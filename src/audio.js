@@ -38,6 +38,7 @@ export function createAudio({ muted = false } = {}) {
 
   return {
     unlock,
+    tone,      // for other games on this engine to voice their own sounds
     get muted() { return muted; },
     get state() { return ctx ? ctx.state : 'none'; },
     setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : 0.5; },
