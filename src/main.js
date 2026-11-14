@@ -118,7 +118,8 @@ $('sound').addEventListener('click', (e) => { audio.unlock(); toggleSound(); e.c
 $('motion').addEventListener('click', (e) => { calm = !calm; save('calm', calm); labels(); e.currentTarget.blur(); });
 labels(); hud();
 
-requestAnimationFrame(function frame(now) { loop.frame(now); requestAnimationFrame(frame); });
+// The next frame is asked for first, so one thrown error costs a frame, not the game.
+requestAnimationFrame(function frame(now) { requestAnimationFrame(frame); loop.frame(now); });
 
 // For tests: the game's own tick and state, so nothing has to wait on a clock.
 window.__game = {

@@ -42,10 +42,13 @@ let world = newWorld();
 let mode = 'title', endAt = 0, time = 0, freeze = 0;
 let crabScreen = { x: innerWidth / 2, y: innerHeight / 2 };
 
+// A pentatonic run that climbs an octave every six notes, so a load of any
+// size has a note for every shell in it.
 const NOTES = [392, 440, 494, 587, 659, 784];
+const note = (i) => NOTES[i % NOTES.length] * 2 ** Math.floor(i / NOTES.length);
 function sound(e) {
-  if (e.type === 'pick') audio.tone('triangle', NOTES[e.carry - 1], NOTES[e.carry - 1] * 1.02, 0.11, 0.4);
-  else if (e.type === 'build') for (let i = 0; i < e.n; i++) audio.tone('triangle', NOTES[i] * 1.5, NOTES[i] * 1.5, 0.14, 0.4, i * 0.06);
+  if (e.type === 'pick') audio.tone('triangle', note(e.carry - 1), note(e.carry - 1) * 1.02, 0.11, 0.4);
+  else if (e.type === 'build') for (let i = 0; i < e.n; i++) audio.tone('triangle', note(i) * 1.5, note(i) * 1.5, 0.14, 0.4, i * 0.06);
   else if (e.type === 'tier') [523, 659, 784, 1047].forEach((f, i) => audio.tone('square', f, f, 0.18, 0.22, i * 0.09));
   else if (e.type === 'wind') { audio.tone('sawtooth', 1150, 760, 0.12, 0.2); audio.tone('sawtooth', 1150, 700, 0.14, 0.2, 0.16); }
   else if (e.type === 'dive') audio.tone('square', 820, 260, 0.2, 0.14);
@@ -244,7 +247,8 @@ $('shopbtn').addEventListener('click', (e) => { audio.unlock(); openShop(true); 
 $('shopclose').addEventListener('click', (e) => { openShop(false); e.stopPropagation(); });
 addEventListener('keydown', (e) => { if (shopOpen && e.code === 'Escape') openShop(false); });
 
-requestAnimationFrame(function frame(now) { loop.frame(now); requestAnimationFrame(frame); });
+// The next frame is asked for first, so one thrown error costs a frame, not the game.
+requestAnimationFrame(function frame(now) { requestAnimationFrame(frame); loop.frame(now); });
 
 // For tests: the game's own tick and state, so nothing has to wait on a clock.
 window.__game = {
