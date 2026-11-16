@@ -134,6 +134,7 @@ const DIRS = ["North", "East", "South", "West"];
     const g = window.__opticon.game;
     g.watcher.guards.length = 0;
     g.watcher.skills.dispatch = 0;
+    g.watcher.spent = false; // a fresh turn's action: this checks the control, not the one-action rule
   });
   await page.evaluate(() => window.__opticon.input.onIntent("skill", "dispatch"));
   await page.waitForTimeout(150);
@@ -145,19 +146,21 @@ const DIRS = ["North", "East", "South", "West"];
 
   // ---------- 2. Staged rotation ----------
   await startWatcher(page);
-  const base = await page.evaluate(() => window.__opticon.game.watcher.facing);
+  // The eye moves one 30-degree beam per press, up to three, as one action.
+  const base = await page.evaluate(() => window.__opticon.game.watcher.beam);
+  const B = (n) => (base + n + 12) % 12;
 
-  await page.keyboard.press("KeyE"); // rotate clockwise
+  await page.keyboard.press("KeyE"); // aim one beam clockwise
   await page.waitForTimeout(200);
   let s = await page.evaluate(() => ({
-    facing: window.__opticon.game.watcher.facing,
-    staged: window.__opticon.stagedFacing,
+    facing: window.__opticon.game.watcher.beam,
+    staged: window.__opticon.stagedBeam,
     rotated: window.__opticon.game.watcher.rotatedThisTurn,
     btn: document.getElementById("commitBtn").textContent,
     gaze: document.getElementById("facingLabel").textContent,
   }));
   check(s.facing === base && !s.rotated, "pressing rotate does NOT commit the gaze");
-  check(s.staged === (base + 1) % 4, `the rotation is staged as a preview (got ${s.staged})`);
+  check(s.staged === B(1), `the aim is staged as a preview, one beam over (got ${s.staged})`);
   check(/\?/.test(s.gaze), `the HUD marks the gaze as provisional (got ${JSON.stringify(s.gaze)})`);
   check(/Commit/i.test(s.btn), `the confirm control offers to commit (got ${JSON.stringify(s.btn)})`);
 
@@ -167,19 +170,19 @@ const DIRS = ["North", "East", "South", "West"];
   await page.keyboard.press("KeyQ");
   await page.waitForTimeout(150);
   s = await page.evaluate(() => ({
-    staged: window.__opticon.stagedFacing,
-    facing: window.__opticon.game.watcher.facing,
+    staged: window.__opticon.stagedBeam,
+    facing: window.__opticon.game.watcher.beam,
     rotated: window.__opticon.game.watcher.rotatedThisTurn,
   }));
-  check(s.staged === (base + 3) % 4, `the player can switch to the other direction before committing (got ${s.staged})`);
+  check(s.staged === B(-1), `the player can switch to the other direction before committing (got ${s.staged})`);
   check(s.facing === base && !s.rotated, "switching direction still has not touched the real gaze");
 
   // Cancelling back to the original heading must leave nothing staged.
   await page.keyboard.press("KeyE");
   await page.waitForTimeout(200);
   s = await page.evaluate(() => ({
-    staged: window.__opticon.stagedFacing,
-    facing: window.__opticon.game.watcher.facing,
+    staged: window.__opticon.stagedBeam,
+    facing: window.__opticon.game.watcher.beam,
     rotated: window.__opticon.game.watcher.rotatedThisTurn,
     btn: document.getElementById("commitBtn").textContent,
   }));
@@ -193,12 +196,12 @@ const DIRS = ["North", "East", "South", "West"];
   await page.keyboard.press("Space"); // first press: commit the rotation
   await page.waitForTimeout(300);
   s = await page.evaluate(() => ({
-    facing: window.__opticon.game.watcher.facing,
-    staged: window.__opticon.stagedFacing,
+    facing: window.__opticon.game.watcher.beam,
+    staged: window.__opticon.stagedBeam,
     rotated: window.__opticon.game.watcher.rotatedThisTurn,
     turn: window.__opticon.game.turn,
   }));
-  check(s.facing === (base + 1) % 4, `confirming applies the staged rotation (got ${s.facing}, base ${base})`);
+  check(s.facing === B(1), `confirming applies the staged aim (got ${s.facing}, base ${base})`);
   check(s.staged === null, "the preview clears once committed");
   check(s.turn === "Watcher", "committing a rotation does not also end the turn");
 
@@ -207,11 +210,11 @@ const DIRS = ["North", "East", "South", "West"];
   await page.keyboard.press("KeyE");
   await page.waitForTimeout(200);
   s = await page.evaluate(() => ({
-    staged: window.__opticon.stagedFacing,
+    staged: window.__opticon.stagedBeam,
     hint: document.getElementById("hint").textContent,
   }));
-  check(s.staged === null, "no preview is offered once the rotation is spent");
-  check(/already rotated/i.test(s.hint), `the player is told why (got ${JSON.stringify(s.hint)})`);
+  check(s.staged === null, "no preview is offered once the turn's action is spent");
+  check(/already acted/i.test(s.hint), `the player is told why (got ${JSON.stringify(s.hint)})`);
 
   // And the next press really does end the turn.
   await page.keyboard.press("Space");

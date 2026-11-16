@@ -489,11 +489,13 @@ export class Renderer {
     this.guardMeshes = new Map(); // id -> { group, light }
 
     // --- Watcher gaze wedge (a flat sector on the ground).
-    this.gazeMesh = this.makeWedge(COLORS.gaze, 0.22);
+    this.gazeMesh = this.makeWedge(COLORS.gaze, 0.22); // the whole quarter, shown on a Wide Scan
+    this.beamMesh = this.makeWedge(COLORS.gaze, 0.3, 30); // the eye's 30-degree beam
     this.bluffMesh = this.makeWedge(COLORS.bluff, 0.14);
     this.groups.gaze = this.gazeMesh;
     this.groups.bluff = this.bluffMesh;
     this.scene.add(this.gazeMesh);
+    this.scene.add(this.beamMesh);
     this.scene.add(this.bluffMesh);
 
     // --- Noise ping pool.
@@ -602,14 +604,16 @@ export class Renderer {
     this.resize();
   }
 
-  makeWedge(color, opacity) {
-    // A 90-degree sector fan lying on the ground, apex at tower center.
+  makeWedge(color, opacity, degrees = 90) {
+    // A sector fan lying on the ground, apex at tower center, pointing North.
+    // Its radius is set to the play area when the map is known.
     const seg = 16;
     const geo = new THREE.BufferGeometry();
     const verts = [0, 0.02, 0];
-    const R = 30;
+    const R = 1;
+    const half = (degrees * Math.PI / 180) / 2;
     for (let i = 0; i <= seg; i++) {
-      const a = -Math.PI / 4 + (Math.PI / 2) * (i / seg);
+      const a = -half + 2 * half * (i / seg);
       verts.push(Math.sin(a) * R, 0.02, -Math.cos(a) * R);
     }
     const idx = [];
@@ -894,7 +898,11 @@ export class Renderer {
     // watcher/overview angle. Also hidden on the ground-level prisoner camera
     // for the legitimate Watcher, for atmosphere/clutter reasons.
     const showGaze = this.viewMode !== "prisoner" && !!opts.showWatcherInfo;
-    this.updateWedge(this.gazeMesh, facing, showGaze);
+    // The beam, where the eye looks this turn (or will, if an aim is staged);
+    // on a Wide Scan the whole quarter.
+    const beam = opts.previewBeam != null ? opts.previewBeam : game.watcher.beam;
+    this.updateWedge(this.gazeMesh, facing, showGaze && !!game.watcher.wideScan);
+    this.updateWedge(this.beamMesh, beam, showGaze && beam != null && !game.watcher.wideScan, 30);
     this.updateWedge(
       this.bluffMesh,
       game.watcher.bluff,
@@ -949,16 +957,20 @@ export class Renderer {
     this.renderer.render(this.scene, this.camera);
   }
 
-  updateWedge(mesh, dir, visible) {
+  // `dir` counts steps of `stepDeg` clockwise from North: quarters (90) for the
+  // quarter and bluff wedges, beams (30) for the eye's beam.
+  updateWedge(mesh, dir, visible, stepDeg = 90) {
     if (dir == null || !visible) {
       mesh.visible = false;
       return;
     }
     mesh.visible = true;
     mesh.position.set(this.worldX(this.center.x), 0.03, this.worldZ(this.center.y));
-    // Wedge default points North (-Z). Rotate to dir.
-    const rot = [0, -Math.PI / 2, Math.PI, Math.PI / 2][dir];
-    mesh.rotation.set(0, rot, 0);
+    // Reach to the outer wall, not past it.
+    const reach = (this.playRadius || 17) + 0.5;
+    mesh.scale.set(reach, 1, reach);
+    // Wedge default points North (-Z); turning clockwise on the map is negative about Y.
+    mesh.rotation.set(0, -dir * stepDeg * Math.PI / 180, 0);
   }
 
   // Trace a staged (uncommitted) prisoner path: a ring per tile + a thin line

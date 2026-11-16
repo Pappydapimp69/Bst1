@@ -119,9 +119,10 @@ function check(cond, label) {
     const g = window.__opticon.game;
     if (g.log.some((l) => /turns to face/.test(l.msg))) return;
     const turn = g.turn, rotated = g.watcher.rotatedThisTurn, facing = g.watcher.facing, status = g.status;
-    g.turn = "Watcher"; g.watcher.rotatedThisTurn = false; g.status = "playing";
+    const beam = g.watcher.beam, spent = g.watcher.spent;
+    g.turn = "Watcher"; g.watcher.rotatedThisTurn = false; g.watcher.spent = false; g.status = "playing";
     rotateWatcher(g, 1);
-    g.turn = turn; g.watcher.rotatedThisTurn = rotated; g.watcher.facing = facing; g.status = status;
+    g.turn = turn; g.watcher.rotatedThisTurn = rotated; g.watcher.facing = facing; g.watcher.beam = beam; g.watcher.spent = spent; g.status = status;
   });
   // The on-screen log was removed from the HUD, so the leak guard now
   // checks the SOURCE of truth: what renderLog() would hand a Prisoner-role

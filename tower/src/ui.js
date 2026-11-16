@@ -72,9 +72,13 @@ export class UI {
         ? `Prisoner ${game.activePrisoner + 1}/${game.prisoners.length}`
         : game.turn;
     this.el.turn.className = "val " + (game.turn === "Watcher" ? "watcher" : "prisoner");
-    const staged = previewFacing != null && previewFacing !== game.watcher.facing;
+    // The eye looks along one 30-degree beam; name it by its quarter and its
+    // bearing. `stagedBeam` (set by main.js) is an aim not yet committed.
+    const beam = this.stagedBeam != null ? this.stagedBeam : game.watcher.beam;
+    const staged = this.stagedBeam != null && this.stagedBeam !== game.watcher.beam;
+    const named = `${DIRS[Math.round(beam / 3) % 4]} ${beam * 30}°`;
     this.el.facing.textContent = showWatcherInfo
-      ? (staged ? `${DIRS[previewFacing]} ?` : DIRS[game.watcher.facing]) +
+      ? (staged ? `${named} ?` : named) +
         (game.watcher.bluff != null ? `  (claims ${DIRS[game.watcher.bluff]})` : "")
       : revealGaze
         ? `${DIRS[game.watcher.facing]} 🪶`

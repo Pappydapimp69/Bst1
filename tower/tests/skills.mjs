@@ -164,6 +164,7 @@ async function startAs(page, btn) {
   await page.evaluate(() => { window.__opticon.game.noise = []; });
 
   // Wide scan is always usable — fire it with its key and confirm cooldown.
+  await page.evaluate(() => { window.__opticon.game.watcher.spent = false; }); // each skill below is checked as its own turn's action
   await page.keyboard.press("Digit6");
   await page.waitForTimeout(250);
   const afterWide = await page.evaluate(() => {
@@ -190,6 +191,7 @@ async function startAs(page, btn) {
     g.noise = [{ x: center.x, y: center.y - 3, ttl: 1, source: "test" }];
     g.watcher.skills.echo = 0;
   });
+  await page.evaluate(() => { window.__opticon.game.watcher.spent = false; });
   await page.keyboard.press("Digit7");
   await page.waitForTimeout(100);
   const afterEcho = await page.evaluate(() => ({
@@ -216,6 +218,7 @@ async function startAs(page, btn) {
     return null;
   });
   check(openedDoorKey != null, "generated map provides an eligible door for Remote Lock");
+  await page.evaluate(() => { window.__opticon.game.watcher.spent = false; }); // each skill below is checked as its own turn's action
   await page.keyboard.press("Digit8");
   await page.waitForTimeout(100);
   const afterLock = await page.evaluate((key) => ({
@@ -234,6 +237,7 @@ async function startAs(page, btn) {
     const dx = g.map.exit.x - center.x, dy = g.map.exit.y - center.y;
     return Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? 0 : 2) : (dx > 0 ? 1 : 3);
   });
+  await page.evaluate(() => { window.__opticon.game.watcher.spent = false; }); // each skill below is checked as its own turn's action
   await page.keyboard.press("Digit9");
   await page.waitForTimeout(150);
   const armed = await page.evaluate(() => window.__opticon.armedSkill);
@@ -248,6 +252,13 @@ async function startAs(page, btn) {
   check(afterDispatch.guards === 2, `dispatch spawns 2 guards (got ${afterDispatch.guards})`);
   check(afterDispatch.meshes === 2, `renderer builds a mesh per guard (got ${afterDispatch.meshes})`);
   check(afterDispatch.armed === null, "dispatch clears the armed flag once fired");
+
+  // One action a turn: with the dispatch spent, another skill is refused and says why.
+  await page.evaluate(() => { const g = window.__opticon.game; g.watcher.skills.echo = 0; g.noise.push({ x: 1, y: 1, ttl: 1, source: "test" }); });
+  await page.keyboard.press("Digit7");
+  await page.waitForTimeout(150);
+  const second = await page.evaluate(() => ({ hint: document.getElementById("hint").textContent, cd: window.__opticon.game.watcher.skills.echo }));
+  check(second.cd === 0 && /already acted/i.test(second.hint), `a second action in one turn is refused (got ${JSON.stringify(second)})`);
 
   check(errors.length === 0, `watcher scenario: no console errors (${errors.length} found)`);
   await page.close();
@@ -316,11 +327,13 @@ async function startAs(page, btn) {
     await p3.waitForTimeout(200);
   }
   await tap(p3, 7); // RT: fire whichever skill the pad slot cursor is on (arms whatever it lands on)
+  await p3.evaluate(() => { window.__opticon.game.watcher.spent = false; }); // the dispatch below is checked as its own turn's action
   // Cycle LT until the slot cursor is on DISPATCH (index 4), then fire it.
   for (let i = 0; i < 5; i++) {
     const onDispatch = await p3.evaluate(() => window.__opticon.armedSkill === "dispatch");
     if (onDispatch) break;
     await tap(p3, 6); // LT: advance slot cursor
+    await p3.evaluate(() => { window.__opticon.game.watcher.spent = false; }); // skills fired on the way spend the action; this checks the pad mapping
     await tap(p3, 7); // RT: fire the now-selected slot
   }
   const armedViaPad = await p3.evaluate(() => window.__opticon.armedSkill);

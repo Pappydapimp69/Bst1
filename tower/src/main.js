@@ -8,6 +8,10 @@ import {
   breakWindow,
   endPrisonerTurn,
   rotateWatcher,
+  aimWatcher,
+  beamQuarter,
+  BEAMS,
+  GAZE_MOVE_MAX,
   setBluff,
   watcherScan,
   endWatcherTurn,
@@ -92,6 +96,7 @@ const app = {
   // whole turn with no way to cancel or pick the other way. Nothing reaches
   // the rules until the same confirm control the Prisoner uses.
   stagedFacing: null,
+  stagedBeam: null, // the beam the human Watcher is aiming at, before committing it
   // checkOver() has four call sites (turn handoffs, the AI loops, and the
   // walk-animation drain), and the first thing it does — app.running = false
   // — does not stop the later ones from re-entering while isOver() is still
@@ -704,6 +709,8 @@ function startGame(overrides = {}) {
   app.stagedPath = [];
   app.armedSkill = null;
   app.stagedFacing = null;
+  app.stagedBeam = null;
+  if (app.ui) app.ui.stagedBeam = null;
   app.resultRecorded = false;
   breakArmed = false;
   updateBreakToggleUI();
@@ -938,7 +945,8 @@ function runStepSetup() {
     p.custody = CUSTODY_TURNS; p.mp = 0; p.muffled = false; p.graceTurns = 0; p.struggledThisTurn = false;
   }
   if (su.guards === "here") spawnGuards(g, quadrantOf(g, p.x, p.y));
-  if (su.ready) g.watcher.skills[su.ready] = 0;
+  // Each skill step is taught as a fresh turn's one action.
+  if (su.ready) { g.watcher.skills[su.ready] = 0; g.watcher.spent = false; }
   if (su.noise) {
     const at = tutorialFindTile(g, (x, y) => isWalkable(g, x, y), app.tutorialSpawn, 8);
     if (at) addNoise(g, at.x, at.y, "decoy");
@@ -1519,6 +1527,11 @@ function doUseSkill(skill) {
   const g = app.game;
   if (!g || g.turn !== "Watcher") return;
   if (app.armedSkill && app.armedSkill !== skill) app.armedSkill = null;
+  if (g.watcher.spent) {
+    app.audio.play("blocked");
+    app.ui.hint("You have already acted this turn — Scan & End Turn when ready");
+    return;
+  }
   if (!skillUsable(g, skill)) {
     app.audio.play("blocked");
     app.ui.hint(skillUnavailableHint(g, skill));
@@ -1530,6 +1543,11 @@ function doUseSkill(skill) {
     app.audio.play("ui");
     app.ui.hint(app.armedSkill ? targetedSkillHint(skill) : hintFor());
     updateSkillBar();
+    return;
+  }
+  if (hasStagedRotation()) {
+    app.audio.play("blocked");
+    app.ui.hint("Moving the eye is this turn's action — aim back to use a skill instead");
     return;
   }
   let arg = null;
@@ -1689,49 +1707,50 @@ function effectiveFacing() {
 
 function hasStagedRotation() {
   const g = app.game;
-  return !!g && app.stagedFacing != null && app.stagedFacing !== g.watcher.facing;
+  return !!g && app.stagedBeam != null && app.stagedBeam !== g.watcher.beam;
 }
 
 function clearStagedRotation() {
   app.stagedFacing = null;
+  app.stagedBeam = null;
+  if (app.ui) app.ui.stagedBeam = null;
 }
 
-// One 90° step per turn is the rule, so the preview is clamped to the two
-// neighbours of the committed facing. That clamp is what makes cancelling and
-// switching sides fall out for free: from base, LB/RB pick a side; from a
-// staged side, the opposite key walks back to base (cancel) and the same key
-// is a no-op rather than an illegal 180.
+// The eye moves one 30-degree beam per press, up to three from where it
+// started the turn (90 degrees). Moving it is the turn's one action, so it is
+// refused once a skill has been used, and pressing back to the start cancels.
 function stageRotation(delta) {
   const g = app.game;
   if (!g || g.turn !== "Watcher") return;
-  if (g.watcher.rotatedThisTurn) {
+  if (g.watcher.spent) {
     app.audio.play("blocked");
-    app.ui.hint("Already rotated this turn — Scan & End Turn when ready");
+    app.ui.hint("You have already acted this turn — Scan & End Turn when ready");
     return;
   }
-  const base = g.watcher.facing;
-  const cur = effectiveFacing();
-  const offset = (cur - base + 4) % 4; // 0 = none, 1 = clockwise, 3 = ccw
-  let next = offset === 0 ? (base + delta + 4) % 4
-    : (offset === 1 && delta < 0) || (offset === 3 && delta > 0) ? base
-      : cur; // same side again would be a 180 — refuse rather than silently allow
-  if (next === cur) {
+  const base = g.watcher.beam;
+  const cur = app.stagedBeam ?? base;
+  let offset = ((cur - base + BEAMS) % BEAMS);
+  if (offset > BEAMS / 2) offset -= BEAMS;
+  const nextOffset = offset + (delta > 0 ? 1 : -1);
+  if (Math.abs(nextOffset) > GAZE_MOVE_MAX) {
     app.audio.play("blocked");
   } else {
-    app.stagedFacing = next === base ? null : next;
+    const next = (base + nextOffset + BEAMS) % BEAMS;
+    app.stagedBeam = next === base ? null : next;
+    app.stagedFacing = app.stagedBeam == null ? null : beamQuarter(app.stagedBeam);
     app.audio.play("rotate");
-    if (app.stagedFacing != null) app.tutorial?.emit("aimed");
+    if (app.stagedBeam != null) app.tutorial?.emit("aimed");
   }
   afterWatcherStateChange();
 }
 
-// Spend the turn's rotation for real. Separate from staging so the rules only
-// ever see a deliberate, confirmed choice.
+// Spend the turn on the aimed beam for real.
 function commitStagedRotation() {
   const g = app.game;
   if (!g || !hasStagedRotation()) return;
-  const delta = ((app.stagedFacing - g.watcher.facing + 4) % 4) === 1 ? 1 : -1;
-  const r = rotateWatcher(g, delta);
+  let steps = ((app.stagedBeam - g.watcher.beam + BEAMS) % BEAMS);
+  if (steps > BEAMS / 2) steps -= BEAMS;
+  const r = aimWatcher(g, steps);
   clearStagedRotation();
   if (r.ok) app.tutorial?.emit("rotated");
   app.audio.play(r.ok ? "rotate" : "blocked");
@@ -1741,6 +1760,7 @@ function commitStagedRotation() {
 function afterWatcherStateChange() {
   const g = app.game;
   if (!g) return;
+  app.ui.stagedBeam = app.stagedBeam;
   app.ui.updateHud(g, app.viewMode, humanLabel(), shouldShowWatcherInfo(), humanControlsCurrentTurn(), effectiveFacing());
   app.ui.renderLog(g, shouldShowWatcherInfo());
   app.ui.hint(hintFor());
@@ -2345,6 +2365,7 @@ function loop(t) {
       showPrisoner,
       showWatcherInfo: shouldShowWatcherInfo(),
       previewFacing: app.stagedFacing,
+      previewBeam: app.stagedBeam,
       stagedPath: app.stagedPath,
       viewedPrisoner: humanPrisonerIndex(),
       selfNoise: (viewedPrisoner && viewedPrisoner.selfNoise) || [],

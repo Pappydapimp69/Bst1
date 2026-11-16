@@ -67,6 +67,18 @@ export const GUARD_SIGHT = 1;         // squares seen in EVERY direction
 
 export const ROUND_LIMIT = 90;
 
+// The tower's gaze is a narrow beam, not a quarter of the prison: one person
+// attends to about 20-30 degrees at a time (the useful field of view), so the
+// eye looks along one of twelve 30-degree beams, and a solid wall between the
+// tower and a square hides it. Each turn the Watcher does ONE thing: move the
+// beam (up to 90 degrees, the old turn's reach) or act (a skill). Naming a
+// quarter aloud, the bluff, is talk and costs nothing.
+export const BEAMS = 12;
+export const BEAM_DEG = 360 / BEAMS;
+export const GAZE_HALF_DEG = BEAM_DEG / 2;
+export const GAZE_MOVE_MAX = 3; // beams per turn: 90 degrees
+export const beamQuarter = (b) => Math.round((((b % BEAMS) + BEAMS) % BEAMS) / 3) % 4;
+
 // ---- Custody -------------------------------------------------------------
 // Being caught used to be instant deletion: `p.alive = false`, no appeal. That
 // is the harshest possible reading of a panopticon — the eye finds you and you
@@ -200,6 +212,8 @@ export function createGame(map, opts = {}) {
       bluff: null, // a direction index the Watcher claims to also be watching
       lastBluff: null, // snapshot of `bluff` from the turn just ended (see endWatcherTurn)
       rotatedThisTurn: false,
+      beam: (((opts.watcherFacing ?? 0) * 3) % BEAMS + BEAMS) % BEAMS, // which 30-degree beam the eye looks along
+      spent: false, // the turn's one action (move the gaze, or a skill) is used
       // AI-controlled-only bookkeeping: an exponentially-blended running
       // suspicion per cardinal direction, letting a harder AI stay wary of a
       // direction after the noise that raised it has already expired out of
@@ -797,6 +811,7 @@ export function endPrisonerTurn(game) {
     p.struggledThisTurn = false;
     game.turn = "Watcher";
     game.watcher.rotatedThisTurn = false;
+    game.watcher.spent = false;
     checkEndConditions(game);
     return { ok: true, held: true };
   }
@@ -815,18 +830,67 @@ export function endPrisonerTurn(game) {
   }
   game.turn = "Watcher";
   game.watcher.rotatedThisTurn = false;
+    game.watcher.spent = false;
   return { ok: true };
 }
 
 // ---- Watcher actions -----------------------------------------------------
 
+// Turn a quarter (90 degrees) clockwise or back: the old control, kept as a
+// full-reach move of the beam.
 export function rotateWatcher(game, delta) {
+  return aimWatcher(game, delta > 0 ? GAZE_MOVE_MAX : -GAZE_MOVE_MAX);
+}
+
+// Move the beam by `steps` 30-degree beams (1 to 3 either way). This is the
+// turn's one action, so it is refused once anything else has been done.
+export function aimWatcher(game, steps) {
   if (game.turn !== "Watcher" || game.status !== "playing") return { ok: false };
-  if (game.watcher.rotatedThisTurn) return { ok: false, reason: "already-rotated" };
-  game.watcher.facing = (game.watcher.facing + delta + 4) % 4;
+  if (game.watcher.spent) return { ok: false, reason: "spent" };
+  if (!Number.isInteger(steps) || steps === 0 || Math.abs(steps) > GAZE_MOVE_MAX) return { ok: false, reason: "too-far" };
+  game.watcher.beam = (game.watcher.beam + steps + BEAMS) % BEAMS;
+  game.watcher.facing = beamQuarter(game.watcher.beam);
   game.watcher.rotatedThisTurn = true;
-  logMsg(game, `Watcher turns to face ${DIRS[game.watcher.facing]}.`, { watcherOnly: true });
+  game.watcher.spent = true;
+  logMsg(game, `Watcher turns to face ${DIRS[game.watcher.facing]} (${game.watcher.beam * BEAM_DEG}°).`, { watcherOnly: true });
   return { ok: true };
+}
+
+// Is (x,y) inside beam `beam`? Measured by the square's centre's bearing from
+// the tower's centre, edges included so no square falls between two beams.
+export function inWatcherBeam(game, beam, x, y) {
+  const { center } = game.map;
+  const dx = x - center.x, dy = y - center.y;
+  if (dx === 0 && dy === 0) return false;
+  const bearing = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+  let diff = Math.abs(bearing - beam * BEAM_DEG) % 360;
+  if (diff > 180) diff = 360 - diff;
+  return diff <= GAZE_HALF_DEG + 1e-9;
+}
+
+// Can the tower see (x,y) at all? A straight line from its centre, stopped by
+// walls, shut doors and lamp posts; the tower and the moat it looks across
+// are not in its own way.
+export function towerSees(game, x, y) {
+  const { center } = game.map;
+  const dist = Math.max(Math.abs(x - center.x), Math.abs(y - center.y));
+  for (let i = 1; i < dist; i++) {
+    const cx = Math.round(center.x + (x - center.x) * i / dist);
+    const cy = Math.round(center.y + (y - center.y) * i / dist);
+    if (cx === x && cy === y) continue;
+    const t = tileAt(game, cx, cy);
+    if (t === TILE.TOWER || t === TILE.MOAT) continue;
+    if (blocksSight(game, cx, cy)) return false;
+  }
+  return true;
+}
+
+// What the scan can catch: the beam (or the whole quarter on a Wide Scan),
+// and only where the tower has a clear line.
+export function inTowerView(game, x, y) {
+  const w = game.watcher;
+  const inArc = w.wideScan ? inWatcherGaze(game, w.facing, x, y) : inWatcherBeam(game, w.beam, x, y);
+  return inArc && towerSees(game, x, y);
 }
 
 // The 180-degree half-plane version, used only for a WIDE_SCAN turn. Kept
@@ -863,6 +927,13 @@ export function skillUsable(game, skill) {
 }
 
 export function useSkill(game, skill, arg) {
+  if (game.turn === "Watcher" && game.watcher.spent) return { ok: false, reason: "spent" };
+  const r = useSkillNow(game, skill, arg);
+  if (r.ok) game.watcher.spent = true;
+  return r;
+}
+
+function useSkillNow(game, skill, arg) {
   if (game.turn !== "Watcher" || game.status !== "playing") {
     return { ok: false, reason: "not-your-turn" };
   }
@@ -886,7 +957,7 @@ export function useSkill(game, skill, arg) {
 
   if (skill === SKILLS.WIDE_SCAN) {
     if (game.watcher.wideScan) return { ok: false, reason: "already-armed" };
-    game.watcher.wideScan = true;
+    game.watcher.wideScan = true; // this scan covers the eye's whole quarter, not one beam
     // A sweep this broad can't be disguised — it costs you the whole bluff,
     // which is the tradeoff: raw coverage in exchange for misdirection.
     game.watcher.bluff = null;
@@ -1153,9 +1224,7 @@ export function watcherScan(game, difficulty = "medium") {
     logMsg(game, `Watcher sweeps the yard... (the eye is still settling).`);
     return { ok: true, caught: null, grace: true };
   }
-  const dir = game.watcher.facing;
   const wide = !!game.watcher.wideScan;
-  const inGaze = wide ? inWatcherGazeWide : inWatcherGaze;
   let caught = null;
   for (const p of game.prisoners) {
     if (!p.alive || p.escaped) continue;
@@ -1165,7 +1234,7 @@ export function watcherScan(game, difficulty = "medium") {
     // very next scan and mean nothing. Spans their own next turn too, which is
     // why it is counted in turns rather than rounds.
     if (p.graceTurns > 0) continue;
-    if (!inGaze(game, dir, p.x, p.y)) continue;
+    if (!inTowerView(game, p.x, p.y)) continue;
     if (isExposed(game, p.x, p.y, difficulty)) {
       seize(game, p, "gaze");
       caught = p;

@@ -11,6 +11,12 @@ import {
 } from "./map.js";
 import {
   rotateWatcher,
+  aimWatcher,
+  inWatcherBeam,
+  towerSees,
+  beamQuarter,
+  BEAMS,
+  GAZE_MOVE_MAX,
   setBluff,
   watcherScan,
   endWatcherTurn,
@@ -93,31 +99,28 @@ export function playWatcherTurn(game, difficulty = "medium", seed = 1, exposureT
   if (isOver(game) || game.turn !== "Watcher") return actions;
 
   const scores = blendSuspicion(game, scoreDirections(game, tuning), tuning);
-  const cur = game.watcher.facing;
 
-  // Best reachable direction this turn (can only rotate +/-1 step, i.e. 90 deg).
-  const reachable = [cur, (cur + 1) % 4, (cur + 3) % 4];
-  let best = cur;
-  let bestScore = -Infinity;
-  for (const d of reachable) {
-    if (scores[d] > bestScore) {
-      bestScore = scores[d];
-      best = d;
-    }
+  // One action a turn: move the beam, or act. Score each 30-degree beam from
+  // the same public signals (noise it can see, lit lamps, the gate's side,
+  // and the quarter's remembered suspicion), then move only when a reachable
+  // beam is clearly better than holding; holding frees the turn for a skill.
+  const beamScores = scoreBeams(game, tuning, scores);
+  const cur = game.watcher.beam;
+  let bestStep = 0;
+  for (let step = -GAZE_MOVE_MAX; step <= GAZE_MOVE_MAX; step++) {
+    const b = (cur + step + BEAMS) % BEAMS;
+    if (beamScores[b] > beamScores[(cur + bestStep + BEAMS) % BEAMS] + 1e-9) bestStep = step;
   }
-
-  // Rotate toward the best reachable direction (one 90-degree step max).
-  if (best !== cur) {
-    const delta = (best === (cur + 1) % 4) ? 1 : -1;
-    const r = rotateWatcher(game, delta);
-    if (r.ok) actions.push({ type: "rotate", to: game.watcher.facing });
-  } else {
-    actions.push({ type: "hold", facing: cur });
+  const gain = beamScores[(cur + bestStep + BEAMS) % BEAMS] - beamScores[cur];
+  let moved = false;
+  if (bestStep !== 0 && gain > 0.5) {
+    const r = aimWatcher(game, bestStep);
+    if (r.ok) { moved = true; actions.push({ type: "rotate", to: game.watcher.facing, beam: game.watcher.beam }); }
   }
+  if (!moved) actions.push({ type: "hold", facing: game.watcher.facing, beam: cur });
 
-  // Maybe bluff a different high-suspicion direction to spread paranoia.
+  // Naming a quarter is talk, not an action: bluff the highest-scoring other quarter.
   if (rng() < tuning.bluffChance) {
-    // Pick the highest-scoring direction that ISN'T where we're really looking.
     let bluffDir = -1;
     let bs = -Infinity;
     for (let d = 0; d < 4; d++) {
@@ -133,25 +136,22 @@ export function playWatcherTurn(game, difficulty = "medium", seed = 1, exposureT
     }
   }
 
-  // Skills, before committing the scan. Gated by `skillUse` so difficulty is
-  // a real lever here too (easy barely uses them; hard leans on them), and
-  // every use goes through skillUsable() so the AI never burns a cooldown on
-  // a no-op — the same "don't offer a dead action" rule the item placement
-  // follows on the prisoner side.
-  for (const s of pickSkills(game, tuning, rng)) {
-    let arg = null;
-    if (s === SKILLS.DOUBLE_BLUFF) {
-      // A second claim, different from both the truth and the first bluff.
-      for (let d = 0; d < 4; d++) {
-        if (d !== game.watcher.facing && d !== game.watcher.bluff) { arg = d; break; }
+  // A turn that did not move the beam may act instead.
+  if (!moved) {
+    for (const s of pickSkills(game, tuning, rng)) {
+      let arg = null;
+      if (s === SKILLS.DOUBLE_BLUFF) {
+        for (let d = 0; d < 4; d++) {
+          if (d !== game.watcher.facing && d !== game.watcher.bluff) { arg = d; break; }
+        }
+      } else if (s === SKILLS.LOCK) {
+        arg = firstOpenDoor(game);
+      } else if (s === SKILLS.DISPATCH) {
+        arg = pickDispatchQuadrant(game);
       }
-    } else if (s === SKILLS.LOCK) {
-      arg = firstOpenDoor(game);
-    } else if (s === SKILLS.DISPATCH) {
-      arg = pickDispatchQuadrant(game);
+      const r = useSkill(game, s, arg);
+      if (r.ok) actions.push({ type: "skill", skill: s });
     }
-    const r = useSkill(game, s, arg);
-    if (r.ok) actions.push({ type: "skill", skill: s });
   }
 
   // Commit the scan (captures an exposed prisoner in the true wedge).
@@ -212,4 +212,21 @@ function firstOpenDoor(game) {
   return null;
 }
 
-export { scoreDirections, blendSuspicion, pickSkills };
+// Each beam's worth looking along: fresh noise it can actually see (a marker
+// behind a wall is evidence for the guards, not the eye), lit lamps it covers,
+// a share of its quarter's blended suspicion, and the gate's side.
+function scoreBeams(game, tuning, quarterScores) {
+  const out = new Array(BEAMS).fill(0);
+  for (let b = 0; b < BEAMS; b++) {
+    for (const n of game.noise) {
+      if (inWatcherBeam(game, b, n.x, n.y) && towerSees(game, n.x, n.y)) out[b] += tuning.noiseWeight * n.ttl;
+    }
+    for (const l of game.map.lights) {
+      if (game.lightState[l.group] && inWatcherBeam(game, b, l.x, l.y)) out[b] += 0.1;
+    }
+    out[b] += 0.3 * quarterScores[beamQuarter(b)];
+  }
+  return out;
+}
+
+export { scoreDirections, blendSuspicion, pickSkills, scoreBeams };
