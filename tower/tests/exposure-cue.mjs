@@ -1,0 +1,149 @@
+// exposure-cue.mjs — Headless check of the exposure vignette (dangerVignette
+// class toggling on isExposed) and the log-leak fix (the Watcher's real
+// rotation must never reach a Prisoner-role viewer's log).
+// Run: node game/tests/exposure-cue.mjs
+import { createRequire } from "module";
+import http from "http";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { chromium, chromiumPath } from "./browser.mjs";
+
+const require = createRequire(import.meta.url);
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, "..");
+const PORT = 8209;
+
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css" };
+
+function serve() {
+  return http.createServer((req, res) => {
+    let p = decodeURIComponent(req.url.split("?")[0]);
+    if (p === "/") p = "/index.html";
+    const file = path.join(ROOT, p);
+    if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      res.writeHead(404); res.end("nf"); return;
+    }
+    res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
+    fs.createReadStream(file).pipe(res);
+  });
+}
+
+let ok = true;
+function check(cond, label) {
+  console.log(cond ? `  ✓ ${label}` : `  ✗ ${label}`);
+  if (!cond) ok = false;
+}
+
+(async () => {
+  const server = serve();
+  await new Promise((r) => server.listen(PORT, r));
+
+  const browser = await chromium.launch({
+    executablePath: chromiumPath,
+    args: ["--use-gl=swiftshader", "--enable-webgl", "--ignore-gpu-blocklist", "--no-sandbox"],
+  });
+  const errors = [];
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  page.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
+
+  await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+  await page.keyboard.down("Space"); await page.waitForTimeout(750); await page.keyboard.up("Space");
+  await page.waitForTimeout(500);
+  await page.click("#playPrisoner");
+  await page.waitForTimeout(200);
+  await page.hover("#btnStart");
+  await page.mouse.down();
+  await page.waitForTimeout(750);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__opticon.renderer.skipIntro());
+
+  // Force the prisoner onto a lit tile (deterministic exposure) and let a
+  // frame tick so updateDangerVignette() picks it up.
+  const litResult = await page.evaluate(() => {
+    const a = window.__opticon;
+    const g = a.game;
+    const p = g.prisoners[g.activePrisoner];
+    // createGame() switches OFF every light group near a spawn so the opening
+    // moves happen in shadow. With a 3-prisoner group that can cover EVERY
+    // group on some seeds, leaving nothing lit to test against (a rare flake
+    // on the random per-run seed). Turn one back on explicitly rather than
+    // retrying seeds — the vignette rule under test doesn't care WHY a tile
+    // is lit, only that it is.
+    let light = g.map.lights.find((l) => g.lightState[l.group]);
+    if (!light && g.map.lights.length) {
+      light = g.map.lights[0];
+      g.lightState[light.group] = true;
+    }
+    if (!light) return { found: false };
+    p.x = light.x; p.y = light.y;
+    return { found: true };
+  });
+  check(litResult.found, "map has an active light to test against");
+  await page.waitForTimeout(150);
+
+  let hasDangerClass = await page.$eval("#dangerVignette", (el) => el.classList.contains("danger"));
+  check(hasDangerClass, "vignette shows 'danger' class when the prisoner is lit (exposed)");
+
+  // Move off any light: exposure should clear next frame.
+  // "Very unlikely" was not never: on some seeds the far corner (1,1) sat in a
+  // light radius and this failed. Ask the rules for a tile that is not exposed.
+  await page.evaluate(async () => {
+    const { isExposed } = await import("./src/rules.js");
+    const g = window.__opticon.game;
+    const p = g.prisoners[g.activePrisoner];
+    const n = g.map.size;
+    for (let y = 1; y < n - 1; y++) for (let x = 1; x < n - 1; x++) {
+      if (!isExposed(g, x, y, window.__opticon.config.difficulty)) { p.x = x; p.y = y; return; }
+    }
+  });
+  await page.waitForTimeout(150);
+  hasDangerClass = await page.$eval("#dangerVignette", (el) => el.classList.contains("danger"));
+  check(!hasDangerClass, "vignette clears once the prisoner is no longer exposed");
+
+  // Log-leak check: end a couple of turns so the AI Watcher rotates, then
+  // confirm the log never contains the real-facing phrase for a Prisoner-
+  // role viewer (the bluff "declares eyes on" line is fine and expected).
+  await page.keyboard.press("Space"); // end prisoner turn -> AI watcher acts
+  await page.waitForTimeout(1200);
+  // The AI may legitimately HOLD its facing, or catch someone before it ever
+  // turns, so waiting on an AI rotation made this a ~1-in-5 flake. Drive one
+  // real rotation through the real rules function (same module instance the
+  // game uses) so the leak assertions below always have teeth.
+  await page.evaluate(async () => {
+    const { rotateWatcher } = await import("./src/rules.js");
+    const g = window.__opticon.game;
+    if (g.log.some((l) => /turns to face/.test(l.msg))) return;
+    const turn = g.turn, rotated = g.watcher.rotatedThisTurn, facing = g.watcher.facing, status = g.status;
+    g.turn = "Watcher"; g.watcher.rotatedThisTurn = false; g.status = "playing";
+    rotateWatcher(g, 1);
+    g.turn = turn; g.watcher.rotatedThisTurn = rotated; g.watcher.facing = facing; g.status = status;
+  });
+  // The on-screen log was removed from the HUD, so the leak guard now
+  // checks the SOURCE of truth: what renderLog() would hand a Prisoner-role
+  // viewer, plus that no Watcher-only text reached the visible HUD anywhere.
+  const leak = await page.evaluate(() => {
+    const a = window.__opticon;
+    const visible = a.ui.renderLog(a.game, false).map((l) => l.msg).join(" ");
+    const anyRotation = a.game.log.some((l) => /turns to face/.test(l.msg));
+    return { visible, anyRotation, hud: document.getElementById("hud").textContent };
+  });
+  check(leak.anyRotation, "the Watcher did rotate (so this assertion has teeth)");
+  check(!/turns to face/.test(leak.visible), `renderLog never hands the Prisoner the real rotation (got: "${leak.visible.slice(0, 160)}")`);
+  check(!/turns to face/.test(leak.hud), "no Watcher-only text is rendered anywhere in the HUD");
+
+  check(errors.length === 0, `no console errors (${errors.length} found)`);
+  errors.slice(0, 10).forEach((e) => console.log("    •", e));
+
+  await browser.close();
+  server.close();
+  console.log(ok ? "\n✓ exposure-cue passed" : "\n✗ exposure-cue failed");
+  process.exit(ok ? 0 : 1);
+})().catch((e) => {
+  console.error("EXPOSURE-CUE TEST FAILED:", e);
+  process.exit(1);
+});

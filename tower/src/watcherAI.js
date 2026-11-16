@@ -1,0 +1,215 @@
+// watcherAI.js — Single-player opponent that plays the Watcher.
+// Pure logic: given a game, it decides rotate/bluff/scan actions.
+//
+// The AI never "sees" prisoners directly (that would break the fantasy). It
+// reasons from the same public signals a human Watcher gets: fresh NOISE tiles,
+// lit tiles, and which quadrant the exit sits in (prisoners must trend there).
+
+import {
+  DIRS,
+  DIR_VEC,
+} from "./map.js";
+import {
+  rotateWatcher,
+  setBluff,
+  watcherScan,
+  endWatcherTurn,
+  inWatcherGaze,
+  isOver,
+  useSkill,
+  skillUsable,
+  objAt,
+  quadrantOf,
+  SKILLS,
+} from "./rules.js";
+import { makeRng } from "./map.js";
+
+export const DIFFICULTY = Object.freeze({
+  easy: { bluffChance: 0.15, exitBias: 0.2, noiseWeight: 1.0, memory: 1, skillUse: 0.1 },
+  medium: { bluffChance: 0.4, exitBias: 0.5, noiseWeight: 1.5, memory: 2, skillUse: 0.35 },
+  hard: { bluffChance: 0.7, exitBias: 0.9, noiseWeight: 2.0, memory: 3, skillUse: 0.7 },
+});
+
+// Blend this turn's raw scores into game.watcher.suspicion so a harder AI
+// (larger `memory`) stays wary of a direction for several turns after the
+// noise that raised it has already aged out of game.noise, instead of fully
+// resetting its attention every single turn. memory=1 (easy) means alpha=1:
+// suspicion === this turn's raw scores, i.e. no memory at all.
+function blendSuspicion(game, scores, tuning) {
+  const alpha = 1 / Math.max(1, tuning.memory);
+  const s = game.watcher.suspicion || (game.watcher.suspicion = [0, 0, 0, 0]);
+  for (let d = 0; d < 4; d++) s[d] = s[d] * (1 - alpha) + scores[d] * alpha;
+  return s;
+}
+
+// Score each of the 4 cardinal directions by how much "suspicion" it holds.
+function scoreDirections(game, tuning) {
+  const { center } = game.map;
+  const scores = [0, 0, 0, 0];
+
+  // Weight fresh noise: newer (higher ttl) matters more, in the wedge it implies.
+  for (const n of game.noise) {
+    const dx = n.x - center.x;
+    const dy = n.y - center.y;
+    const dir = dominantDir(dx, dy);
+    if (dir < 0) continue;
+    scores[dir] += tuning.noiseWeight * n.ttl;
+  }
+
+  // Lit, occupied-looking tiles: any lit tile in a wedge adds mild suspicion.
+  for (const l of game.map.lights) {
+    if (!game.lightState[l.group]) continue;
+    const dir = dominantDir(l.x - center.x, l.y - center.y);
+    if (dir >= 0) scores[dir] += 0.1;
+  }
+
+  // Exit bias: the AI knows prisoners must reach the exit; bias toward that side.
+  if (game.map.exit) {
+    const ed = dominantDir(
+      game.map.exit.x - center.x,
+      game.map.exit.y - center.y
+    );
+    if (ed >= 0) scores[ed] += tuning.exitBias;
+  }
+
+  return scores;
+}
+
+function dominantDir(dx, dy) {
+  if (dx === 0 && dy === 0) return -1;
+  if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? 0 : 2;
+  return dx > 0 ? 1 : 3;
+}
+
+// Decide + apply a full Watcher turn. Returns a list of actions taken (for UI).
+// `exposureTier` lets a caller drive the CAPTURE RULE independently of the
+// AI's decision quality. They're the same thing in the shipped game, but
+// they are two different levers, and keeping them separable is what makes
+// the difficulty question measurable at all (see sandbox/t25-*).
+export function playWatcherTurn(game, difficulty = "medium", seed = 1, exposureTier = null) {
+  const tuning = DIFFICULTY[difficulty] || DIFFICULTY.medium;
+  const rng = makeRng((seed ^ (game.round * 2654435761)) >>> 0);
+  const actions = [];
+  if (isOver(game) || game.turn !== "Watcher") return actions;
+
+  const scores = blendSuspicion(game, scoreDirections(game, tuning), tuning);
+  const cur = game.watcher.facing;
+
+  // Best reachable direction this turn (can only rotate +/-1 step, i.e. 90 deg).
+  const reachable = [cur, (cur + 1) % 4, (cur + 3) % 4];
+  let best = cur;
+  let bestScore = -Infinity;
+  for (const d of reachable) {
+    if (scores[d] > bestScore) {
+      bestScore = scores[d];
+      best = d;
+    }
+  }
+
+  // Rotate toward the best reachable direction (one 90-degree step max).
+  if (best !== cur) {
+    const delta = (best === (cur + 1) % 4) ? 1 : -1;
+    const r = rotateWatcher(game, delta);
+    if (r.ok) actions.push({ type: "rotate", to: game.watcher.facing });
+  } else {
+    actions.push({ type: "hold", facing: cur });
+  }
+
+  // Maybe bluff a different high-suspicion direction to spread paranoia.
+  if (rng() < tuning.bluffChance) {
+    // Pick the highest-scoring direction that ISN'T where we're really looking.
+    let bluffDir = -1;
+    let bs = -Infinity;
+    for (let d = 0; d < 4; d++) {
+      if (d === game.watcher.facing) continue;
+      if (scores[d] > bs) {
+        bs = scores[d];
+        bluffDir = d;
+      }
+    }
+    if (bluffDir >= 0) {
+      setBluff(game, bluffDir);
+      actions.push({ type: "bluff", dir: bluffDir });
+    }
+  }
+
+  // Skills, before committing the scan. Gated by `skillUse` so difficulty is
+  // a real lever here too (easy barely uses them; hard leans on them), and
+  // every use goes through skillUsable() so the AI never burns a cooldown on
+  // a no-op — the same "don't offer a dead action" rule the item placement
+  // follows on the prisoner side.
+  for (const s of pickSkills(game, tuning, rng)) {
+    let arg = null;
+    if (s === SKILLS.DOUBLE_BLUFF) {
+      // A second claim, different from both the truth and the first bluff.
+      for (let d = 0; d < 4; d++) {
+        if (d !== game.watcher.facing && d !== game.watcher.bluff) { arg = d; break; }
+      }
+    } else if (s === SKILLS.LOCK) {
+      arg = firstOpenDoor(game);
+    } else if (s === SKILLS.DISPATCH) {
+      arg = pickDispatchQuadrant(game);
+    }
+    const r = useSkill(game, s, arg);
+    if (r.ok) actions.push({ type: "skill", skill: s });
+  }
+
+  // Commit the scan (captures an exposed prisoner in the true wedge).
+  const scan = watcherScan(game, exposureTier || difficulty);
+  actions.push({ type: "scan", caught: scan.caught ? scan.caught.id : null });
+
+  // End the turn (ages noise, hands back to prisoner).
+  const end = endWatcherTurn(game);
+  actions.push({ type: "end", ended: !!end.ended });
+  return actions;
+}
+
+// Which skills to spend this turn. At most ONE per turn — a Watcher that
+// dumped every ready cooldown at once would be swingy rather than
+// threatening, and the cooldowns are meant to be a pacing device.
+function pickSkills(game, tuning, rng) {
+  if (rng() >= (tuning.skillUse ?? 0.35)) return [];
+  // Preference order reflects value: catching someone beats setting up.
+  // DISPATCH leads — unlike a scan/bluff/lock, it's an independent capture
+  // roll that doesn't depend on this turn's own gaze wedge landing right.
+  const order = [SKILLS.DISPATCH, SKILLS.WIDE_SCAN, SKILLS.ECHO, SKILLS.DOUBLE_BLUFF, SKILLS.LOCK];
+  for (const s of order) {
+    if (skillUsable(game, s)) return [s];
+  }
+  return [];
+}
+
+// Send guards where the evidence points: the freshest live noise tile's
+// quadrant, same target-selection logic moveGuards uses once they're
+// walking. With nothing to go on yet, fall back to wherever the AI's own
+// blended suspicion runs highest — never a blind/random guess.
+function pickDispatchQuadrant(game) {
+  let best = null, bestTtl = -1;
+  for (const n of game.noise) {
+    if (n.ttl > bestTtl) { bestTtl = n.ttl; best = quadrantOf(game, n.x, n.y); }
+  }
+  if (best != null) return best;
+  const s = game.watcher.suspicion;
+  let idx = 0;
+  for (let i = 1; i < 4; i++) if (s[i] > s[idx]) idx = i;
+  return idx;
+}
+
+// The first open door, chosen WITHOUT looking at where anyone is standing.
+//
+// This used to skip doors a prisoner was occupying — reading `p.x`/`p.y`,
+// the exact information a Watcher is never given. It was only a pre-check
+// for a refusal the rules already enforce (useSkill returns `occupied`), so
+// removing it costs the AI nothing but a wasted attempt, which is precisely
+// what a human Watcher risks when they try the same thing blind.
+function firstOpenDoor(game) {
+  for (const key of game.openedDoors) {
+    const x = key % game.map.size;
+    const y = Math.floor(key / game.map.size);
+    if (objAt(game, x, y) !== 1 /* OBJ.DOOR */) continue;
+    return { x, y };
+  }
+  return null;
+}
+
+export { scoreDirections, blendSuspicion, pickSkills };
