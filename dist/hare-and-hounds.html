@@ -1,0 +1,581 @@
+<title>Hare and Hounds</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #10170f; overflow: hidden; color: #efe8d2;
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-user-select: none; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #stats { position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(10px, env(safe-area-inset-top)); display: flex; gap: 14px; flex-wrap: wrap;
+    font-weight: 600; font-size: 15px; text-shadow: 0 1px 3px #000; pointer-events: none; max-width: calc(100% - 120px); }
+  #horn.soon { color: #ffcf5a; }
+  #buttons { position: fixed; right: max(12px, env(safe-area-inset-right)); top: max(8px, env(safe-area-inset-top)); display: flex; gap: 6px; }
+  button { font: inherit; font-size: 13px; color: #efe8d2; background: rgba(16,24,14,.75); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; padding: 6px 10px; min-height: 44px; min-width: 44px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #ffcf5a; }
+  #card { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: rgba(8,12,8,.78); }
+  #card[hidden] { display: none; }
+  #card h1 { margin: 0 0 8px; font-size: clamp(30px, 7vw, 54px); color: #f4e3b0; }
+  #card p { margin: 6px auto; max-width: 30em; text-wrap: balance; }
+  #card .go { margin-top: 16px; font-weight: 700; color: #ffcf5a; }
+</style>
+<canvas id="game" aria-label="Hare and Hounds board"></canvas>
+<div id="stats"><span id="clover">Clover 0 / 2</span><span id="horn">Horn in 3</span><span id="dawn">Dawn in 160</span></div>
+<div id="buttons"><button id="wait" aria-label="Wait a turn">Wait</button></div>
+<div id="card">
+  <div>
+    <h1 id="title">Hare and Hounds</h1>
+    <p id="line">Nibble both clover patches and get back to your form before the hounds find you. A hound sees as far as its lantern glow, and if you can see it inside that glow, it can see you. The hunt horn gives your place away on a fixed count, so move before it sounds.</p>
+    <p id="how">Arrow keys or WASD to move, Space to wait. On a phone, tap beside the hare or swipe.</p>
+    <p class="go" id="go">Press a key or tap to start</p>
+  </div>
+</div>
+<script type="module">
+// ---- src/rng.js
+// Seeded random streams. Each consumer gets its own stream keyed by a stable
+// name, so adding a consumer never shifts another's draws. A stream's whole
+// state is four integer words, so it saves as plain JSON.
+
+// Hash the seed text first: raw small seeds give alike first draws.
+function hasher(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489917);
+    return (h ^= h >>> 16) >>> 0;
+  };
+}
+
+function makeStream(seed, name) {
+  const h = hasher(String(seed) + ':' + name);
+  const s = [h(), h(), h(), h()];
+  for (let i = 0; i < 12; i++) next(s);
+  return s;
+}
+
+// sfc32 stepped in place on the four words; returns a float in [0, 1).
+function next(s) {
+  let a = s[0] | 0, b = s[1] | 0, c = s[2] | 0, d = s[3] | 0;
+  const t = (((a + b) | 0) + d) | 0;
+  d = (d + 1) | 0;
+  a = b ^ (b >>> 9);
+  b = (c + (c << 3)) | 0;
+  c = (c << 21) | (c >>> 11);
+  c = (c + t) | 0;
+  s[0] = a; s[1] = b; s[2] = c; s[3] = d;
+  return (t >>> 0) / 4294967296;
+}
+
+// ---- hare/src/map.js
+// Hedgerow maps, built the way Bob Nystrom's "Rooms and Mazes" (2014) builds
+// dungeons: odd-aligned rooms (here, fields), a maze of lanes carved through
+// the rest, then one gap opened per pair of regions as a spanning tree, with a
+// chance to reopen each gap the tree did not need. That chance, LOOP, is what
+// sets how many alternative routes the hare has. Dead-end lanes are filled in.
+
+const W = 33, H = 23;
+const WALL = 0, FLOOR = 1;
+
+function makeMap(seed, { loop = 0.12, attempts = 60 } = {}) {
+  const r = makeStream(seed, 'map');
+  const int = (n) => Math.floor(next(r) * n);
+  const grid = new Uint8Array(W * H);          // all hedge
+  const region = new Int32Array(W * H).fill(-1);
+  let regions = 0;
+  const rooms = [];
+  const at = (x, y) => y * W + x;
+  const inside = (x, y) => x > 0 && y > 0 && x < W - 1 && y < H - 1;
+  const carve = (x, y, id) => { grid[at(x, y)] = FLOOR; region[at(x, y)] = id; };
+
+  for (let i = 0; i < attempts; i++) {
+    const w = 3 + 2 * int(3), h = 3 + 2 * int(2);
+    const x = 1 + 2 * int((W - w - 1) / 2), y = 1 + 2 * int((H - h - 1) / 2);
+    if (rooms.some((o) => x < o.x + o.w + 1 && o.x < x + w + 1 && y < o.y + o.h + 1 && o.y < y + h + 1)) continue;
+    const id = regions++;
+    rooms.push({ x, y, w, h, id });
+    for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) carve(xx, yy, id);
+  }
+
+  // A growing-tree maze from every untouched odd cell, each its own region.
+  const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+  for (let y = 1; y < H; y += 2) for (let x = 1; x < W; x += 2) {
+    if (grid[at(x, y)] !== WALL) continue;
+    const id = regions++;
+    carve(x, y, id);
+    const stack = [[x, y]];
+    while (stack.length) {
+      const [cx, cy] = stack[stack.length - 1];
+      const open = dirs.filter(([dx, dy]) => inside(cx + 2 * dx, cy + 2 * dy) && grid[at(cx + 2 * dx, cy + 2 * dy)] === WALL);
+      if (!open.length) { stack.pop(); continue; }
+      const [dx, dy] = open[int(open.length)];
+      carve(cx + dx, cy + dy, id); carve(cx + 2 * dx, cy + 2 * dy, id);
+      stack.push([cx + 2 * dx, cy + 2 * dy]);
+    }
+  }
+
+  // Connectors: a hedge tile between two different regions.
+  const connectors = [];
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    if (grid[at(x, y)] !== WALL) continue;
+    const near = new Set();
+    for (const [dx, dy] of dirs) { const g = region[at(x + dx, y + dy)]; if (g >= 0) near.add(g); }
+    if (near.size >= 2) connectors.push({ x, y, regions: [...near] });
+  }
+
+  // Spanning tree from a random field; spare connectors reopen with chance LOOP.
+  const merged = Array.from({ length: regions }, (_, i) => i);
+  const root = (i) => { while (merged[i] !== i) i = merged[i] = merged[merged[i]]; return i; };
+  let main = rooms.length ? rooms[int(rooms.length)].id : 0;
+  let left = connectors.slice(), opened = 0, extra = 0;
+  while (left.length) {
+    const touching = left.filter((c) => c.regions.some((g) => root(g) === root(main)));
+    if (!touching.length) break;
+    const c = touching[int(touching.length)];
+    carve(c.x, c.y, root(main)); opened++;
+    for (const g of c.regions) merged[root(g)] = root(main);
+    main = root(main);
+    left = left.filter((o) => {
+      if (o === c) return false;
+      if (o.regions.every((g) => root(g) === main)) {     // would make a loop
+        if (next(r) < loop) { carve(o.x, o.y, main); extra++; }
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Fill dead-end lanes back in until none are left (fields keep their corners).
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      if (grid[at(x, y)] !== FLOOR) continue;
+      let exits = 0;
+      for (const [dx, dy] of dirs) if (grid[at(x + dx, y + dy)] === FLOOR) exits++;
+      if (exits <= 1) { grid[at(x, y)] = WALL; changed = true; }
+    }
+  }
+  return { w: W, h: H, grid, rooms, opened, extra, loop };
+}
+
+const isFloor = (m, x, y) => x >= 0 && y >= 0 && x < m.w && y < m.h && m.grid[y * m.w + x] === FLOOR;
+
+function floorTiles(m) {
+  const out = [];
+  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (isFloor(m, x, y)) out.push([x, y]);
+  return out;
+}
+
+// Breadth-first distances over floor from (x, y); -1 where unreachable.
+function distances(m, x, y, blocked) {
+  const d = new Int32Array(m.w * m.h).fill(-1);
+  const q = [y * m.w + x]; d[q[0]] = 0;
+  for (let i = 0; i < q.length; i++) {
+    const c = q[i], cx = c % m.w, cy = (c - cx) / m.w;
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      const nx = cx + dx, ny = cy + dy, n = ny * m.w + nx;
+      if (isFloor(m, nx, ny) && d[n] < 0 && !(blocked && blocked(nx, ny))) { d[n] = d[c] + 1; q.push(n); }
+    }
+  }
+  return d;
+}
+
+// Chokepoints: floor tiles whose loss cuts the map in two. A map with
+// alternative routes has few; a pure tree of lanes is almost all chokepoints.
+function chokepoints(m) {
+  const tiles = floorTiles(m);
+  const [sx, sy] = tiles[0];
+  let cuts = 0;
+  for (const [x, y] of tiles) {
+    const start = x === sx && y === sy ? tiles[1] : tiles[0];
+    const d = distances(m, start[0], start[1], (bx, by) => bx === x && by === y);
+    let reached = 0;
+    d.forEach((v) => { if (v >= 0) reached++; });
+    if (reached < tiles.length - 1) cuts++;
+  }
+  return cuts / tiles.length;
+}
+
+// ---- hare/src/fov.js
+// What a hound can see, by Albert Ford's symmetric shadowcasting
+// (albertford.com/shadowcasting): a floor tile is visible only when its centre
+// lies inside the swept slopes, which makes sight between floor tiles
+// symmetric. If a hound can see the hare, the hare can see that hound, so the
+// danger the page draws is exactly the danger there is. Slopes are kept as
+// integer fractions so no rounding can break the symmetry.
+
+const QUADS = [
+  (ox, oy, row, col) => [ox + col, oy - row],
+  (ox, oy, row, col) => [ox + row, oy + col],
+  (ox, oy, row, col) => [ox + col, oy + row],
+  (ox, oy, row, col) => [ox - row, oy + col],
+];
+
+// Every tile seen from (ox, oy) within `radius`, as a Set of y * w + x.
+function fov(m, ox, oy, radius = Infinity) {
+  const seen = new Set([oy * m.w + ox]);
+  const r2 = radius * radius;
+  const maxDepth = Math.min(Math.max(m.w, m.h), radius);
+  for (const tf of QUADS) {
+    const wall = (row, col) => { const [x, y] = tf(ox, oy, row, col); return !isFloor(m, x, y); };
+    const reveal = (row, col) => {
+      const [x, y] = tf(ox, oy, row, col);
+      if (x >= 0 && y >= 0 && x < m.w && y < m.h && row * row + col * col <= r2) seen.add(y * m.w + x);
+    };
+    // slopes as [numerator, denominator], denominator > 0
+    const scan = (depth, sn, sd, en, ed) => {
+      if (depth > maxDepth) return;
+      const minCol = Math.floor((2 * depth * sn + sd) / (2 * sd));
+      const maxCol = Math.ceil((2 * depth * en - ed) / (2 * ed));
+      let prev = null;                                     // null, 'wall' or 'floor'
+      for (let col = minCol; col <= maxCol; col++) {
+        const isWall = wall(depth, col);
+        const symmetric = col * sd >= depth * sn && col * ed <= depth * en;
+        if (isWall || symmetric) reveal(depth, col);
+        if (prev === 'wall' && !isWall) { sn = 2 * col - 1; sd = 2 * depth; }
+        if (prev === 'floor' && isWall) scan(depth + 1, sn, sd, 2 * col - 1, 2 * depth);
+        prev = isWall ? 'wall' : 'floor';
+      }
+      if (prev === 'floor') scan(depth + 1, sn, sd, en, ed);
+    };
+    scan(1, -1, 1, 1, 1);
+  }
+  return seen;
+}
+
+// The usual shortcut, for comparison only: a Bresenham line from eye to tile,
+// blocked by any hedge strictly between. It is not symmetric.
+function lineOfSight(m, x0, y0, x1, y1) {
+  let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy, x = x0, y = y0;
+  while (!(x === x1 && y === y1)) {
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x += sx; }
+    if (e2 <= dx) { err += dx; y += sy; }
+    if ((x !== x1 || y !== y1) && !isFloor(m, x, y)) return false;
+  }
+  return true;
+}
+
+// ---- hare/src/sim.js
+// Hare & Hounds, turn by turn. The hare must nibble three clover patches and
+// get home to its form; three hounds hunt it by sight. Hounds see only within
+// their lantern radius and only along symmetric sight lines, and the hunt horn
+// forces the hare's position into the open on a fixed schedule, the way
+// Scotland Yard surfaces Mr. X on set moves. Everything here is pure: the same
+// seed and moves give the same hunt.
+
+const C = {
+  HOUNDS: 3,
+  SIGHT: 4,                 // a hound's lantern radius, in tiles
+  CLOVER: 2,
+  LOOP: 0.12,               // chance to reopen a spare gap in the hedges
+  REVEAL: 'horn',           // 'never' | 'horn' | 'always'
+  HORN: [3, 8, 13, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96, 102, 108, 114, 120, 126, 132, 138, 144, 150, 156],
+  TURNS: 160,               // dawn: a hare still out at this turn is safe but scoreless
+};
+const MOVES = { stay: [0, 0], up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0] };
+
+function createHunt(seed, opts = {}) {
+  const c = { ...C, ...opts };
+  const map = makeMap(seed, { loop: c.LOOP });
+  const r = makeStream(seed, 'place');
+  const pick = (list) => list[Math.floor(next(r) * list.length)];
+  const fields = map.rooms.filter((o) => isFloor(map, o.x + 1, o.y + 1));
+  const centre = (o) => [o.x + (o.w >> 1), o.y + (o.h >> 1)];
+  // Home is a field; the hounds start in the field farthest from it, and
+  // clover grows in the fields in between, never in either.
+  const home = centre(pick(fields));
+  const dh = distances(map, home[0], home[1]);
+  const byFar = fields.map((o) => [o, dh[centre(o)[1] * map.w + centre(o)[0]]]).filter(([, d]) => d > 0).sort((a, b) => b[1] - a[1]);
+  const kennel = centre(byFar[0][0]);
+  const middle = byFar.slice(1).map(([o]) => o);
+  const clover = [];
+  while (clover.length < c.CLOVER && middle.length) clover.push(centre(middle.splice(Math.floor(next(r) * middle.length), 1)[0]));
+  const offsets = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
+  const hounds = [];
+  for (const [dx, dy] of offsets) {
+    if (hounds.length === c.HOUNDS) break;
+    if (isFloor(map, kennel[0] + dx, kennel[1] + dy)) hounds.push({ x: kennel[0] + dx, y: kennel[1] + dy, goal: null });
+  }
+  return { c, map, rng: makeStream(seed, 'hounds'), turn: 0, hare: { x: home[0], y: home[1] }, home, clover, eaten: 0,
+    hounds, known: null, seenNow: false, outcome: null, log: [] };
+}
+
+// Tiles any hound can see right now: exactly where the hare would be spotted.
+function watched(h) {
+  const all = new Set();
+  for (const d of h.hounds) for (const t of fov(h.map, d.x, d.y, h.c.SIGHT)) all.add(t);
+  return all;
+}
+// Hounds the hare can see. Sight is symmetric, so a hound inside its lantern
+// range and in view can also see the hare.
+function visibleHounds(h) {
+  const mine = fov(h.map, h.hare.x, h.hare.y);
+  return h.hounds.filter((d) => mine.has(d.y * h.map.w + d.x));
+}
+const hornNow = (h) => h.c.REVEAL === 'always' || (h.c.REVEAL === 'horn' && h.c.HORN.includes(h.turn));
+
+// A hound on the hare's tile, or beside it once the hounds have run, has it:
+// moving on a grid, an equal-speed chaser could otherwise trail one tile
+// behind forever.
+const caught = (h, reach = 0) => h.hounds.some((d) => Math.abs(d.x - h.hare.x) + Math.abs(d.y - h.hare.y) <= reach);
+
+// One turn: the hare moves, then each hound.
+function step(h, move, houndBrain) {
+  if (h.outcome) return h;
+  const [dx, dy] = MOVES[move] || MOVES.stay;
+  if (isFloor(h.map, h.hare.x + dx, h.hare.y + dy)) { h.hare.x += dx; h.hare.y += dy; }
+  if (caught(h)) return end(h, 'caught');
+  const ci = h.clover.findIndex(([x, y]) => x === h.hare.x && y === h.hare.y);
+  if (ci >= 0) { h.clover.splice(ci, 1); h.eaten++; }
+  if (h.eaten >= h.c.CLOVER && h.hare.x === h.home[0] && h.hare.y === h.home[1]) return end(h, 'home');
+  h.turn++;
+  const seen = watched(h).has(h.hare.y * h.map.w + h.hare.x);
+  h.seenNow = seen;
+  h.horn = hornNow(h);
+  if (seen || h.horn) h.known = { x: h.hare.x, y: h.hare.y, turn: h.turn };
+  houndBrain(h);
+  if (caught(h, 1)) return end(h, 'caught');
+  if (h.turn >= h.c.TURNS) return end(h, 'dawn');
+  return h;
+}
+function end(h, outcome) { h.outcome = outcome; return h; }
+
+// The hounds' shared brain. When the hare is known, the nearest hound runs at
+// where it was and the others cut it off at the places it must still visit
+// (its nearest clover, then home); a hound that reaches a stale mark and finds
+// nothing searches a random spot.
+function hounds(h) {
+  const m = h.map;
+  const tiles = h.fields || (h.fields = floorTiles(m));
+  if (h.known && h.known.turn === h.turn) {
+    const k = h.known;
+    const dk = distances(m, k.x, k.y);
+    const order = h.hounds.slice().sort((a, b) => dk[a.y * m.w + a.x] - dk[b.y * m.w + b.x]);
+    const ahead = h.clover.slice().sort((a, b) => dk[a[1] * m.w + a[0]] - dk[b[1] * m.w + b[0]]);
+    ahead.push(h.home);
+    order.forEach((d, i) => { d.goal = i === 0 ? [k.x, k.y] : ahead[Math.min(i - 1, ahead.length - 1)]; });
+  }
+  const taken = new Set();
+  for (const d of h.hounds) {
+    if (!d.goal || (d.x === d.goal[0] && d.y === d.goal[1])) d.goal = tiles[Math.floor(next(h.rng) * tiles.length)];
+    const dist = distances(m, d.goal[0], d.goal[1]);
+    let best = null, bestD = dist[d.y * m.w + d.x];
+    for (const [ex, ey] of Object.values(MOVES)) {
+      const nx = d.x + ex, ny = d.y + ey, nd = dist[ny * m.w + nx];
+      if (isFloor(m, nx, ny) && nd >= 0 && nd < bestD && !taken.has(ny * m.w + nx)) { best = [nx, ny]; bestD = nd; }
+    }
+    if (best) { d.x = best[0]; d.y = best[1]; }
+    taken.add(d.y * m.w + d.x);
+  }
+}
+
+function fingerprint(h) {
+  const parts = [h.turn, h.hare.x, h.hare.y, h.eaten, h.outcome, ...h.hounds.flatMap((d) => [d.x, d.y])];
+  let x = 2166136261;
+  for (const ch of parts.join(',')) x = Math.imul(x ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return x.toString(16);
+}
+
+// ---- hare/src/bot.js
+// A hare good enough to judge the hunt's balance against. It heads for the
+// nearest clover (then home) and, using what symmetric sight lets it know,
+// refuses to step into a tile a hound it can see is watching, and keeps its
+// distance from the hounds it has seen.
+
+function hareBot({ caution = 1 } = {}) {
+  const lastSeen = new Map();
+  return (h) => {
+    const m = h.map;
+    for (const [i, d] of h.hounds.entries()) if (visibleHounds(h).includes(d)) lastSeen.set(i, { x: d.x, y: d.y, turn: h.turn });
+    for (const [i, s] of lastSeen) if (h.turn - s.turn > 6) lastSeen.delete(i);
+    const threats = [...lastSeen.values()];
+    const danger = new Set();
+    for (const t of threats) for (const k of fov(m, t.x, t.y, h.c.SIGHT + 1)) danger.add(k);
+    // Go for the clover it can reach well before any hound it knows of: after
+    // a horn the hounds cut off the nearest one, so a reading hare goes wide.
+    const mine = distances(m, h.hare.x, h.hare.y);
+    const theirs = threats.map((t) => distances(m, t.x, t.y));
+    const margin = ([x, y]) => {
+      const me = mine[y * m.w + x];
+      const them = theirs.length ? Math.min(...theirs.map((d) => d[y * m.w + x])) : 99;
+      return me - Math.min(them, 99) * 0.8 * caution;
+    };
+    const target = h.eaten >= h.c.CLOVER || !h.clover.length ? h.home
+      : h.clover.reduce((a, b) => (margin(a) <= margin(b) ? a : b));
+    const blocked = (x, y) => caution > 0 && danger.has(y * m.w + x) && !(x === target[0] && y === target[1]);
+    let dist = distances(m, target[0], target[1], blocked);
+    if (dist[h.hare.y * m.w + h.hare.x] < 0) dist = distances(m, target[0], target[1]);
+    let best = 'stay', bestScore = Infinity;
+    for (const [name, [dx, dy]] of Object.entries(MOVES)) {
+      const x = h.hare.x + dx, y = h.hare.y + dy;
+      if (!isFloor(m, x, y)) continue;
+      const toGo = dist[y * m.w + x] < 0 ? 999 : dist[y * m.w + x];
+      let fear = 0;
+      for (const t of threats) { const g = Math.abs(t.x - x) + Math.abs(t.y - y); if (g < 4) fear += (4 - g) * 3 * caution; }
+      if (danger.has(y * m.w + x)) fear += 4 * caution;
+      const s = toGo + fear;
+      if (s < bestScore) { bestScore = s; best = name; }
+    }
+    return best;
+  };
+}
+
+// ---- hare/src/main.js
+// The page around the hunt: drawing, input, the horn's sound and the best run.
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+let seedBase = params.get('seed') || String(Math.floor(Math.random() * 1e9));
+let runs = 0, hunt = null, mode = 'title', ghosts = new Map(), audio = null, flash = 0;
+const KEY = 'bst1.hare.best';
+const store = { get() { try { return Number(localStorage.getItem(KEY)) || 0; } catch { return 0; } },
+  set(v) { try { localStorage.setItem(KEY, String(v)); } catch { /* storage can be blocked */ } } };
+
+function newHunt() { hunt = createHunt(seedBase + '-' + runs++); ghosts = new Map(); mode = 'play'; $('card').hidden = true; draw(); hud(); }
+
+// Portrait screens get the meadow turned on its side so the tiles stay big.
+function view() {
+  const w = innerWidth, h = innerHeight, m = hunt ? hunt.map : { w: 33, h: 23 };
+  const turned = h > w;
+  const cols = turned ? m.h : m.w, rows = turned ? m.w : m.h;
+  const top = 56, pad = 8;
+  const tile = Math.max(4, Math.floor(Math.min((w - 2 * pad) / cols, (h - top - pad) / rows)));
+  return { turned, tile, ox: Math.floor((w - cols * tile) / 2), oy: Math.floor(top + (h - top - pad - rows * tile) / 2), cols, rows };
+}
+const toScreen = (v, x, y) => (v.turned ? [v.ox + (hunt.map.h - 1 - y) * v.tile, v.oy + x * v.tile] : [v.ox + x * v.tile, v.oy + y * v.tile]);
+// A screen direction becomes a map move, turned with the board.
+function moveFor(sx, sy, v) {
+  const [mx, my] = v.turned ? [sy, -sx] : [sx, sy];
+  if (Math.abs(mx) > Math.abs(my)) return mx > 0 ? 'right' : 'left';
+  return my > 0 ? 'down' : 'up';
+}
+
+function draw() {
+  const dpr = devicePixelRatio || 1;
+  if (canvas.width !== Math.round(innerWidth * dpr) || canvas.height !== Math.round(innerHeight * dpr)) {
+    canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#10170f'; ctx.fillRect(0, 0, innerWidth, innerHeight);
+  if (!hunt) hunt = createHunt(seedBase + '-preview');
+  const h = hunt, m = h.map, v = view(), t = v.tile;
+  const mine = fov(m, h.hare.x, h.hare.y);
+  const seenHounds = visibleHounds(h);
+  for (const d of seenHounds) ghosts.set(h.hounds.indexOf(d), { x: d.x, y: d.y, turn: h.turn });
+  const danger = new Set();
+  for (const d of seenHounds) for (const k of fov(m, d.x, d.y, h.c.SIGHT)) danger.add(k);
+  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+    const [px, py] = toScreen(v, x, y), k = y * m.w + x;
+    if (!isFloor(m, x, y)) {                    // hedge: a dark mass with one bush per tile
+      ctx.fillStyle = '#142813'; ctx.fillRect(px, py, t, t);
+      const j = ((x * 73856093) ^ (y * 19349663)) >>> 0;
+      ctx.fillStyle = j % 3 ? '#1f3d1d' : '#234621';
+      ctx.beginPath(); ctx.arc(px + t * (0.4 + (j % 5) * 0.05), py + t * (0.45 + (j % 7) * 0.02), t * 0.46, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    const lit = mine.has(k);
+    ctx.fillStyle = lit ? '#7f9b55' : '#3c4e2d';
+    ctx.fillRect(px, py, t, t);
+    if (danger.has(k)) { ctx.fillStyle = 'rgba(255,190,70,.42)'; ctx.fillRect(px, py, t, t); }
+  }
+  const dot = (x, y, r, fill) => { const [px, py] = toScreen(v, x, y); ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(px + t / 2, py + t / 2, t * r, 0, Math.PI * 2); ctx.fill(); };
+  // home form
+  { const [px, py] = toScreen(v, h.home[0], h.home[1]); ctx.strokeStyle = '#3a2a18'; ctx.lineWidth = Math.max(2, t * 0.14); ctx.beginPath(); ctx.ellipse(px + t / 2, py + t / 2, t * 0.42, t * 0.3, 0, 0, Math.PI * 2); ctx.stroke(); ctx.fillStyle = '#5b4429'; ctx.fill(); }
+  for (const [x, y] of h.clover) { for (const [a, b] of [[-0.14, -0.1], [0.14, -0.1], [0, 0.14]]) { const [px, py] = toScreen(v, x, y); ctx.fillStyle = '#c8f07a'; ctx.beginPath(); ctx.arc(px + t / 2 + a * t, py + t / 2 + b * t, t * 0.16, 0, Math.PI * 2); ctx.fill(); } }
+  for (const [i, g] of ghosts) if (!seenHounds.includes(h.hounds[i])) {
+    const age = h.turn - g.turn; if (age > 8) { ghosts.delete(i); continue; }
+    ctx.globalAlpha = Math.max(0.15, 0.55 - age * 0.05); dot(g.x, g.y, 0.3, '#d9c7a4'); ctx.globalAlpha = 1;
+  }
+  for (const d of seenHounds) { dot(d.x, d.y, 0.38, '#2b1d14'); dot(d.x, d.y, 0.3, '#c98b4b'); }
+  dot(h.hare.x, h.hare.y, 0.4, '#1a120c'); dot(h.hare.x, h.hare.y, 0.32, h.horn && mode === 'play' ? '#ffd76a' : '#f2e6cf');
+  if (flash > 0) { ctx.fillStyle = `rgba(255,207,90,${flash * 0.25})`; ctx.fillRect(0, 0, innerWidth, innerHeight); }
+}
+
+function hud() {
+  const h = hunt;
+  $('clover').textContent = `Clover ${h.eaten} / ${h.c.CLOVER}`;
+  const nextHorn = h.c.HORN.find((n) => n > h.turn);
+  const inN = nextHorn ? nextHorn - h.turn : null;
+  $('horn').textContent = inN ? (inN === 1 ? 'Horn next turn' : `Horn in ${inN}`) : 'No more horns';
+  $('horn').classList.toggle('soon', inN === 1);
+  $('dawn').textContent = `Dawn in ${h.c.TURNS - h.turn}`;
+}
+
+function horn() {
+  flash = 1;
+  const fade = () => { flash = Math.max(0, flash - 0.08); draw(); if (flash > 0) requestAnimationFrame(fade); };
+  requestAnimationFrame(fade);
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain(), now = audio.currentTime;
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(330, now); o.frequency.linearRampToValueAtTime(392, now + 0.25);
+    g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(0.12, now + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+    o.connect(g).connect(audio.destination); o.start(now); o.stop(now + 0.75);
+  } catch { /* no sound available */ }
+}
+
+function act(move) {
+  if (mode !== 'play') { newHunt(); return; }
+  step(hunt, move, hounds);
+  if (hunt.horn) horn();
+  hud(); draw();
+  if (hunt.outcome) finish();
+}
+
+function finish() {
+  mode = 'end';
+  const h = hunt, best = store.get();
+  let title, line;
+  if (h.outcome === 'home') {
+    const left = h.c.TURNS - h.turn;
+    title = 'Home safe';
+    line = `Back in your form with ${left} turns of dark to spare.` + (left > best ? ' Your best yet.' : best ? ` Your best is ${best}.` : '');
+    if (left > best) store.set(left);
+  } else if (h.outcome === 'caught') { title = 'Caught'; line = `The hounds had you on turn ${h.turn}, with ${h.eaten} of ${h.c.CLOVER} clover eaten.`; }
+  else { title = 'Dawn'; line = 'The sun came up with you still out in the meadow. The hounds go home, and so do you, hungry.'; }
+  $('title').textContent = title; $('line').textContent = line; $('how').textContent = ''; $('go').textContent = 'Press a key or tap for the next meadow';
+  setTimeout(() => { $('card').hidden = false; }, 350);
+}
+
+const KEYS = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'stay' };
+addEventListener('keydown', (e) => {
+  const dir = KEYS[e.code];
+  if (!dir && mode === 'play') return;
+  e.preventDefault();
+  if (mode !== 'play') { if (!e.repeat) newHunt(); return; }
+  if (dir === 'stay') { act('stay'); return; }
+  const v = view();
+  const [sx, sy] = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
+  act(moveFor(sx, sy, v));
+});
+let down = null;
+canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!down) return;
+  const start = down; down = null;
+  if (mode !== 'play') { newHunt(); return; }
+  const v = view(), dx = e.clientX - start.x, dy = e.clientY - start.y;
+  if (Math.hypot(dx, dy) > 24) { act(moveFor(dx, dy, v)); return; }      // a swipe
+  // a tap beside the hare, judged where the finger landed (a release drifts)
+  const [hx, hy] = toScreen(v, hunt.hare.x, hunt.hare.y);
+  const cx = start.x - (hx + v.tile / 2), cy = start.y - (hy + v.tile / 2);
+  if (Math.hypot(cx, cy) < v.tile * 0.5) { act('stay'); return; }
+  act(moveFor(cx, cy, v));
+});
+$('card').addEventListener('pointerup', (e) => { e.stopPropagation(); if (mode !== 'play') newHunt(); });
+$('wait').addEventListener('click', () => act('stay'));
+addEventListener('resize', draw);
+draw();
+
+// For the browser tests.
+window.__game = {
+  get mode() { return mode; }, state: () => hunt, view, act, newHunt,
+  autoplay() { const b = hareBot(); while (mode === 'play') act(b(hunt)); return hunt.outcome; },
+};
+</script>

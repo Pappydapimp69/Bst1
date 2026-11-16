@@ -41,3 +41,29 @@ The tournament is the design check: it is tuned, and pinned by a test, so that
 no fixed habit such as always carrying three wins, and reading the sky does. A
 throw-a-shell-as-a-lure button was built and cut because the tournament showed
 it was never the better choice.
+
+# Hare and Hounds
+
+A third game, in `hare/`, built to test lessons bs held only as research. A
+hare must nibble two clover patches in a hedged meadow and get back to its form
+before dawn, while three hounds hunt it by lantern light. The hunt horn gives
+the hare's place away on a fixed count, the way Scotland Yard surfaces Mr. X.
+
+    npm run serve   # then open /hare/ at the address it prints
+    npm run hunt    # how often a capable hare gets home, with and without the horn
+
+What the tests settle:
+
+- Sight uses Albert Ford's symmetric shadowcasting, and the test checks every
+  pair of floor tiles on several maps: none sees one way only, while a plain
+  Bresenham line breaks symmetry on over a thousand pairs. So the amber glow
+  the page draws around a hound you can see is exactly where it can see you.
+- Maps are built as Bob Nystrom's rooms and mazes, and the test shows the
+  reopen chance is what makes alternative routes: a spanning tree alone leaves
+  about a third of the meadow as chokepoints, a 12 percent reopen chance
+  leaves about four percent.
+- Hidden movement is the hare's defence: unrevealed, the test hare gets home
+  over a quarter of the time; with the horn, under half as often. Whether the
+  horn's spacing is a fine balance dial, as Scotland Yard's schedule suggests,
+  is not settled: these hounds do no better with the hare always in view than
+  with a horn every 24 turns, which says more about the hounds than the lesson.

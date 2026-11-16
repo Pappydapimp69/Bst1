@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Hare and Hounds</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #10170f; overflow: hidden; color: #efe8d2;
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-user-select: none; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #stats { position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(10px, env(safe-area-inset-top)); display: flex; gap: 14px; flex-wrap: wrap;
+    font-weight: 600; font-size: 15px; text-shadow: 0 1px 3px #000; pointer-events: none; max-width: calc(100% - 120px); }
+  #horn.soon { color: #ffcf5a; }
+  #buttons { position: fixed; right: max(12px, env(safe-area-inset-right)); top: max(8px, env(safe-area-inset-top)); display: flex; gap: 6px; }
+  button { font: inherit; font-size: 13px; color: #efe8d2; background: rgba(16,24,14,.75); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; padding: 6px 10px; min-height: 44px; min-width: 44px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #ffcf5a; }
+  #card { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: rgba(8,12,8,.78); }
+  #card[hidden] { display: none; }
+  #card h1 { margin: 0 0 8px; font-size: clamp(30px, 7vw, 54px); color: #f4e3b0; }
+  #card p { margin: 6px auto; max-width: 30em; text-wrap: balance; }
+  #card .go { margin-top: 16px; font-weight: 700; color: #ffcf5a; }
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Hare and Hounds board"></canvas>
+<div id="stats"><span id="clover">Clover 0 / 2</span><span id="horn">Horn in 3</span><span id="dawn">Dawn in 160</span></div>
+<div id="buttons"><button id="wait" aria-label="Wait a turn">Wait</button></div>
+<div id="card">
+  <div>
+    <h1 id="title">Hare and Hounds</h1>
+    <p id="line">Nibble both clover patches and get back to your form before the hounds find you. A hound sees as far as its lantern glow, and if you can see it inside that glow, it can see you. The hunt horn gives your place away on a fixed count, so move before it sounds.</p>
+    <p id="how">Arrow keys or WASD to move, Space to wait. On a phone, tap beside the hare or swipe.</p>
+    <p class="go" id="go">Press a key or tap to start</p>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

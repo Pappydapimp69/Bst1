@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs crab/tests/*.test.mjs",
-    "play": "node tests/play.mjs && node crab/tests/play.mjs",
+    "test": "node --test tests/*.test.mjs crab/tests/*.test.mjs hare/tests/*.test.mjs",
+    "play": "node tests/play.mjs && node crab/tests/play.mjs && node hare/tests/play.mjs",
     "balance": "node tools/balance.mjs",
     "serve": "node tools/serve.mjs",
-    "bundle": "node tools/bundle.mjs glowmoth && node tools/bundle.mjs crab",
-    "tournament": "node crab/tools/tournament.mjs"
+    "bundle": "node tools/bundle.mjs glowmoth && node tools/bundle.mjs crab && node tools/bundle.mjs hare",
+    "tournament": "node crab/tools/tournament.mjs",
+    "hunt": "node hare/tools/hunt.mjs"
   }
 }
