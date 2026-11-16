@@ -81,8 +81,10 @@ What the tests settle:
   reopen chance is what makes alternative routes: a spanning tree alone leaves
   about a third of the meadow as chokepoints, a 12 percent reopen chance
   leaves about four percent.
-- Hidden movement is the hare's defence: unrevealed, the test hare gets home
-  over a quarter of the time; with the horn, under half as often. Whether the
-  horn's spacing is a fine balance dial, as Scotland Yard's schedule suggests,
-  is not settled: these hounds do no better with the hare always in view than
-  with a horn every 24 turns, which says more about the hounds than the lesson.
+- Hidden movement is the hare's defence, but the horn's spacing is not a
+  balance dial here. Unrevealed, the test hare gets home about 22 percent of
+  the time; with a horn every turn, every 4 or every 32 turns it gets home 8
+  to 12 percent, so whether the hare is ever revealed matters and how often
+  barely does. Hounds that patrol the hare's goals without any sighting erase
+  even that gap. The finding is about these bots: a deducing human hunter may
+  use each reveal better.

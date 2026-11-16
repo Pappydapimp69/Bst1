@@ -109,3 +109,13 @@ test('random play on many meadows always ends cleanly', () => {
     assert.ok(h.turn <= h.c.TURNS);
   }
 });
+
+test('bst1-76 tested: whether the hare is ever revealed matters, how often does not', () => {
+  const every = (n) => ({ REVEAL: 'horn', HORN: Array.from({ length: 200 }, (_, i) => n * (i + 1)) });
+  const often = rates(every(4), 200).home, rarely = rates(every(32), 200).home, never = rates({ REVEAL: 'never' }, 200).home;
+  // Scotland Yard's schedule suggests reveal spacing tunes the balance. Here a
+  // horn every 4 turns and one every 32 leave the hare about the same chance,
+  // while never revealing it nearly doubles that chance.
+  assert.ok(Math.abs(often - rarely) < 0.05, `every 4: ${often}, every 32: ${rarely}`);
+  assert.ok(never > 1.6 * Math.max(often, rarely), `never ${never}`);
+});
