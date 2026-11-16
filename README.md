@@ -34,6 +34,25 @@ builds the castle faster, but slows the crab, makes it a bigger target, brings
 the gulls down sooner, and is lost with the rest if a gull connects. Gulls only
 trouble a crab that is carrying, and they scatter each time a tier is finished.
 
+The castle outlasts a run. A finished ring stays standing, and the next run
+adds another (the keep, a curtain wall, towers, a second keep, an outer wall),
+each lower on the beach so the tide reaches it sooner. Lose and the tide takes
+the ring in progress and knocks down the newest one standing.
+
+The crab starts with no shell. Once a run a bigger empty one washes up, with a
+wild crab waiting by it: reach it and it is yours, though you set down every
+seashell you are carrying to take it (an anemone stays with you). The first
+one simply becomes your home; after that each find runs a vacancy chain, as
+real hermit crabs do: your old shell goes to your biggest guard, each guard
+takes the shell left by the one ahead, and the smallest shell left over houses
+one new crab for your garrison. Gulls sometimes raid the castle while you are far from
+it; a guard takes as many pecks as its shell is big before it is stunned, then
+the thief steals from the tier being built until you chase it off. A stinging
+anemone, found now and then near the water, is taken up in place of your seashells
+(you set them down to carry it) and arms
+a guard, and a gull that pecks an armed guard is stung off the beach for a
+while. Lose a run and the crabs living in the ring that falls are lost with it.
+
     npm run serve        # then open /crab/ at the address it prints
     npm run tournament   # every habit of play over the same seeds
 

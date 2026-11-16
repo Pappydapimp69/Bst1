@@ -12,7 +12,7 @@ export function play(seed, policy) {
     step(s, bot(s));
     for (const e of s.events) if (e.type === 'hit') hits++;
   }
-  const spare = s.phase === 'won' ? (C.TIDE_TICKS - (s.endTick - s.startTick)) * C.TICK : 0;
+  const spare = s.phase === 'won' ? (s.tideTicks - (s.endTick - s.startTick)) * C.TICK : 0;
   return { won: s.phase === 'won', spare, built: s.built, hits };
 }
 
