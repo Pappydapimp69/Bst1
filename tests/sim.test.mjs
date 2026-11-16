@@ -6,7 +6,7 @@ import { botInput } from '../src/bot.js';
 import { makeStream, next } from '../src/rng.js';
 import { createLoop } from '../src/loop.js';
 import { followCamera } from '../src/camera.js';
-import { createHold } from '../src/input.js';
+import { createHold, stickInput } from '../src/input.js';
 import { load, save } from '../src/save.js';
 import { play, median } from '../tools/balance.mjs';
 import { GOLDEN } from './golden.mjs';
@@ -175,4 +175,23 @@ test('storage: namespaced keys, and a throwing store never breaks the game', () 
   assert.equal(save('best', 9, broken), false);
   map.set('bst1.glowmoth.best', '{not json');
   assert.equal(load('best', 3, store), 3);
+});
+
+test('sticks: a radial dead zone keeps the angle, ignores jitter and starts from zero', () => {
+  const angle = ([x, y]) => Math.atan2(y, x);
+  // A push just off the horizontal: per-axis dead zones would zero the small
+  // axis and snap it flat; a radial one keeps its direction exactly.
+  const [px, py] = stickInput(0.9, 0.15, 0.2);
+  assert.ok(py > 0, 'the small axis survives');
+  assert.ok(Math.abs(angle([px, py]) - Math.atan2(0.15, 0.9)) < 1e-12, 'the angle is kept');
+  const perAxis = (v, d) => (Math.abs(v) > d ? v : 0);
+  assert.equal(perAxis(0.15, 0.2), 0, 'for contrast: per-axis would have snapped it to the cardinal');
+  // Resting jitter inside the dead zone does nothing, in any direction.
+  for (let a = 0; a < 6.3; a += 0.3) assert.deepEqual(stickInput(0.19 * Math.cos(a), 0.19 * Math.sin(a), 0.2), [0, 0]);
+  // Just past the edge the output is tiny, not a jump to 0.2; full travel is full.
+  assert.ok(Math.hypot(...stickInput(0.21, 0, 0.2)) < 0.02);
+  assert.ok(Math.abs(Math.hypot(...stickInput(0.6, 0.8, 0.2)) - 1) < 1e-12);
+  assert.ok(Math.abs(Math.hypot(...stickInput(3, 4, 0.2)) - 1) < 1e-12, 'past full travel stays at one');
+  // The touch stick's 12 percent dead zone: a thumb wobbling 7 px on a 64 px reach is still.
+  assert.deepEqual(stickInput(7 / 64, 0, 0.12), [0, 0]);
 });

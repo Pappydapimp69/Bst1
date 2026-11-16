@@ -23,9 +23,20 @@ const KEYS = {
   ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
   KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1],
 };
-const STICK = 56;    // CSS px of thumb travel for full thrust
+const STICK = 64;    // CSS px of thumb travel for full thrust: a stick base 128 px across
 const REACH = 90;    // CSS px from the moth for full thrust with a mouse
 const DEAD = 0.2;    // stick travel ignored round the centre, so a worn stick does not drift
+const TOUCH_DEAD = 0.12;  // a resting thumb's jitter, as a share of the touch stick's reach
+
+// A radial dead zone: the whole vector's length is tested, not each axis, so a
+// push just off a diagonal keeps its angle instead of snapping to a cardinal,
+// and travel past the dead zone is rescaled to start from zero, with no jump.
+export function stickInput(ax, ay, dead) {
+  const m = Math.hypot(ax, ay);
+  if (m <= dead) return [0, 0];
+  const k = Math.min(1, (m - dead) / (1 - dead)) / m;
+  return [ax * k, ay * k];
+}
 
 export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch, touchPath = false }) {
   const down = new Set();
@@ -46,7 +57,8 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch, touc
     if (pointer.touch) {
       // A floating stick: drag from where the thumb landed, so the hand never
       // has to cover the moth.
-      hold.set('touch', clamp((pointer.x - pointer.ox) / STICK), clamp((pointer.y - pointer.oy) / STICK));
+      const [tx, ty] = stickInput((pointer.x - pointer.ox) / STICK, (pointer.y - pointer.oy) / STICK, TOUCH_DEAD);
+      hold.set('touch', tx, ty);
     } else {
       const m = mothOnScreen();
       hold.set('mouse', clamp((pointer.x - m.x) / REACH), clamp((pointer.y - m.y) / REACH));
@@ -108,8 +120,8 @@ export function bindInput(target, hold, { mothOnScreen, onGesture, onTouch, touc
     let x = 0, y = 0, pressed = false;
     for (const p of pads || []) {
       if (!p || !p.connected) continue;
-      const ax = p.axes[0] || 0, ay = p.axes[1] || 0, m = Math.hypot(ax, ay);
-      if (m > DEAD) { const k = Math.min(1, (m - DEAD) / (1 - DEAD)) / m; x += ax * k; y += ay * k; }
+      const [sx, sy] = stickInput(p.axes[0] || 0, p.axes[1] || 0, DEAD);
+      x += sx; y += sy;
       const b = p.buttons || [];
       const on = (i) => Boolean(b[i] && b[i].pressed);
       if (on(14)) x -= 1;

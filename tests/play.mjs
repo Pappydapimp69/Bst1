@@ -144,6 +144,32 @@ for (const [w, h] of [[320, 568], [390, 780], [780, 390], [900, 600], [1920, 108
   });
 }
 
+await run('an error thrown in one frame costs that frame, not the game', {}, async (page) => {
+  // The page's own error listener would fail the run; this error is the point.
+  page.removeAllListeners('pageerror');
+  const thrown = [];
+  page.on('pageerror', (e) => thrown.push(String(e)));
+  await page.keyboard.down('ArrowRight');
+  await page.waitForFunction(() => window.__game.mode === 'play');
+  await page.evaluate(() => {
+    const proto = CanvasRenderingContext2D.prototype, real = proto.fillRect;
+    let armed = true;
+    proto.fillRect = function (...a) { if (armed) { armed = false; throw new Error('one bad frame'); } return real.apply(this, a); };
+  });
+  await page.waitForFunction(() => true);
+  const t0 = await page.evaluate(() => window.__game.tick);
+  await page.waitForFunction((t0) => window.__game.tick > t0 + 30, t0, { timeout: 10000 });
+  await page.keyboard.up('ArrowRight');
+  assert.equal(thrown.length, 1, 'exactly the one injected error');
+  assert.match(thrown[0], /one bad frame/);
+});
+
+await run('every button is a full touch target, 44 by 44 or more', { hasTouch: true, isMobile: true, viewport: { width: 390, height: 780 } }, async (page) => {
+  const sizes = await page.evaluate(() => [...document.querySelectorAll('button')].map((b) => { const r = b.getBoundingClientRect(); return [b.id, r.width, r.height]; }));
+  assert.ok(sizes.length > 0);
+  for (const [id, w, h] of sizes) assert.ok(w >= 44 && h >= 44, `${id} is ${w}x${h}`);
+});
+
 await run('the browser reproduces the golden replay', {}, async (page) => {
   const fp = await page.evaluate(([seed, ticks]) => window.__game.replay(seed, ticks), [GOLDEN.seed, GOLDEN.ticks]);
   assert.equal(fp, GOLDEN.fingerprint);
