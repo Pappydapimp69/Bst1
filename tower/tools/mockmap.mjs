@@ -7,7 +7,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { makeStream, next } from '../../src/rng.js';
 
 const N = 35, C = 17, S = 20;
-const seed = process.argv[2] || 'mock-8';
+const seed = process.argv[2] || 'v2-65';
 const rng = makeStream(seed, 'map');
 const pick = (n) => Math.floor(next(rng) * n);
 const FLOOR = '.', FENCE = 'f', SOLID = '#', DOOR = 'D', GLASS = 'G', TOWER = 'T', YARD = 'y', LAMP = 'L', EXIT = 'E';
@@ -30,13 +30,37 @@ function boundary(d) {
 }
 // Each boundary gets five crossings spread round it (one open gap, two locked
 // doors, two windows) and solid stretches between them that cast shadows.
+const crossings = [];
 for (const d of [8, 12]) {
   const b = boundary(d), kinds = [FLOOR, DOOR, GLASS, DOOR, GLASS], start = pick(b.length);
   const cross = kinds.map((k, i) => (start + Math.floor((i + 0.15 + next(rng) * 0.7) * b.length / 5)) % b.length);
   cross.forEach((where, i) => { const [x, y] = b[where]; t[y][x] = kinds[i]; });
-  for (let i = 0; i < 5; i++) {
-    const mid = (cross[i] + Math.floor(b.length / 10) + pick(3)) % b.length, len = 3 + pick(3);
-    for (let k = 0; k < len; k++) { const [x, y] = b[(mid + k) % b.length]; if (t[y][x] === FENCE) t[y][x] = SOLID; }
+  // Between the crossings the wall alternates solid stretches, which hide
+  // what is behind them, with barred ones the tower sees through. Windows and
+  // the open gap sit in solid wall, so each is a clear break in it.
+  let run = 0, solid = true;
+  for (let i = 0; i < b.length; i++) {
+    const [x, y] = b[(start + i) % b.length];
+    if (run <= 0) { solid = !solid; run = d === 8 ? (solid ? 1 + pick(2) : 4 + pick(4)) : (solid ? 3 + pick(3) : 2 + pick(3)); }
+    run--;
+    if (t[y][x] === FENCE && solid) t[y][x] = SOLID;
+  }
+  for (const where of cross) for (const o of [-1, 1]) { const [x, y] = b[(where + o + b.length) % b.length]; if (t[y][x] === FENCE) t[y][x] = SOLID; }
+  crossings.push(...cross.map((where) => b[where]));
+}
+// Solid partition walls pointing at the tower divide each ring into cells, as
+// the walls between cells do in a radial prison. Edge-on to the tower they
+// hide almost nothing from it, but they stop movement round the ring except
+// through one opening each: a plain gap, or sometimes a locked door.
+for (const [lo, hi, cells] of [[5, 7, 4], [9, 11, 10], [13, 16, 16]]) {
+  const turn = next(rng) * Math.PI * 2, gapless = pick(cells);
+  for (let c = 0; c < cells; c++) {
+    const a = turn + (c + (next(rng) - 0.5) * 0.35) * Math.PI * 2 / cells, ux = Math.cos(a), uy = Math.sin(a), m = Math.max(Math.abs(ux), Math.abs(uy));
+    const tiles = [];
+    for (let d = lo; d <= hi; d++) tiles.push([C + Math.round(ux * d / m), C + Math.round(uy * d / m)]);
+    if (tiles.some(([x, y]) => crossings.some(([cx, cy]) => Math.max(Math.abs(cx - x), Math.abs(cy - y)) <= 2))) continue;
+    const gap = pick(tiles.length);
+    tiles.forEach(([x, y], i) => { if (t[y][x] === FLOOR) t[y][x] = i !== gap ? SOLID : c !== gapless && next(rng) < 0.3 ? DOOR : FLOOR; });
   }
 }
 // Inside the rings: lone solid blocks to hide behind, and lamps.
@@ -47,16 +71,18 @@ function scatter(count, place) {
   }
 }
 const free = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].every(([a, b]) => [FLOOR, FENCE].includes(at(x + a, y + b)));
-scatter(16, (x, y) => free(x, y) && (t[y][x] = SOLID));
+scatter(9, (x, y) => free(x, y) && (t[y][x] = SOLID));
 const lamps = [];
 scatter(11, (x, y) => free(x, y) && lamps.every((l) => Math.hypot(l.x - x, l.y - y) > 7) && (t[y][x] = LAMP) && lamps.push({ x, y }));
 const exitSide = pick(4), [ex, ey] = [[C + pick(9) - 4, 0], [N - 1, C + pick(9) - 4], [C + pick(9) - 4, N - 1], [0, C + pick(9) - 4]][exitSide];
 t[ey][ex] = EXIT;
+{ const inx = ex + Math.sign(C - ex) * (ex === 0 || ex === N - 1), iny = ey + Math.sign(C - ey) * (ey === 0 || ey === N - 1); t[iny][inx] = FLOOR; }
 const spawn = [[C + 1, C + 6], [C - 6, C + 1], [C - 1, C - 6], [C + 6, C - 1]][exitSide];
+for (const [a, b] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (t[spawn[1] + b][spawn[0] + a] !== LAMP) t[spawn[1] + b][spawn[0] + a] = FLOOR;
 const gaze = exitSide; // the tower is looking at the side the gate is on, so the way out runs through its view
 
 // Sight: a straight line from the tower's centre, stopped by anything solid.
-const blocks = (k) => k === SOLID || k === DOOR || k === LAMP;
+const blocks = (k) => k === SOLID || k === DOOR; // a lamp post is too thin to hide behind
 function line(x0, y0, x1, y1) {
   const out = [], dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
   let err = dx - dy, x = x0, y = y0;
@@ -96,6 +122,19 @@ const loud = route(GLASS, { exposed: 2.5, dark: 1.2, lit: 1 });
 const count = (p, s) => p.filter(([x, y]) => state[y][x] === s).length;
 const through = (p, k) => p.filter(([x, y]) => t[y][x] === k).length;
 const some = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+// How the map measures up, for choosing between seeds: how much solid wall
+// there is, how much of the walkable floor the tower could ever see, and how
+// much of what lies in its gaze right now is hidden.
+let solidIn = 0, floorN = 0, seenN = 0, gazeN = 0, hiddenN = 0;
+for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+  if (t[y][x] === SOLID) solidIn++;
+  if (!walk(t[y][x])) continue;
+  floorN++;
+  if (clear(C, C, x, y)) seenN++;
+  if (state[y][x] === 'hidden') hiddenN++;
+  if (inGaze(x, y)) gazeN++;
+}
 
 // ---- Draw.
 const r = (x, y, cls) => `<rect x="${x * S}" y="${y * S}" width="${S}" height="${S}" class="${cls}"/>`;
@@ -172,16 +211,17 @@ const html = `<title>Opticon Mock Map</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@600;700&display=swap">
 <main>
   <h1>Opticon mock map</h1>
-  <p>The tower's eye is looking ${['north', 'east', 'south', 'west'][gaze]}, between the dotted red lines. You are the white dot in the inner ring, and the gate, marked G, is on the outer wall. <b>Each fence can only be crossed at five places:</b> one open gap, two locked doors and two windows.</p>
+  <p>The tower's eye is looking ${['north', 'east', 'south', 'west'][gaze]}, between the dotted red lines. You are the white dot in the inner ring, and the gate, marked G, is on the outer wall. <b>Each ring wall can only be crossed at five places:</b> one open gap, two locked doors and two windows. Solid walls pointing at the tower divide every ring into cells.</p>
   <div class="map">${svg}</div>
   <div class="routes">
     <div><h2>Quiet route, solid line</h2><p>${quiet.length - 1} steps through ${some(through(quiet, DOOR), 'locked door')}, crossing ${some(count(quiet, 'exposed'), 'exposed square')}. Needs picks.</p></div>
     <div class="l"><h2>Loud route, dotted line</h2><p>${loud.length - 1} steps through ${some(through(loud, GLASS), 'broken window')}, crossing ${some(count(loud, 'exposed'), 'exposed square')}. Every break is heard.</p></div>
   </div>
   <ul class="key">${legend.map(([s, name, text]) => `<li>${s}<div><h2>${name}</h2><span>${text}</span></div></li>`).join('')}</ul>
+  <p>This map has ${solidIn} solid wall squares inside the outer wall. From the tower, ${Math.round(seenN / floorN * 100)}% of the floor can be seen at some point in its sweep, and ${Math.round(hiddenN / gazeN * 100)}% of what is in its gaze right now is hidden.</p>
   <p>A mock for discussion, drawn by a script from the proposed rules. It is not in the game yet.</p>
 </main>
 `;
 mkdirSync(new URL('../mock/', import.meta.url), { recursive: true });
 writeFileSync(new URL('../mock/map.html', import.meta.url), html);
-console.log('wrote mock/map.html', seed, { quiet: quiet.length - 1, qExposed: count(quiet, 'exposed'), qHidden: count(quiet, 'hidden'), qDoors: through(quiet, DOOR), loud: loud.length - 1, lExposed: count(loud, 'exposed'), lWindows: through(loud, GLASS) });
+console.log(JSON.stringify({ seed, solid: solidIn, towerSees: +(seenN / floorN).toFixed(2), hiddenInGaze: +(hiddenN / gazeN).toFixed(2), quiet: quiet.length - 1, qExposed: count(quiet, 'exposed'), qDoors: through(quiet, DOOR), loud: loud.length - 1, lExposed: count(loud, 'exposed'), lWindows: through(loud, GLASS) }));
