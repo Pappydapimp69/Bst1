@@ -34,6 +34,7 @@ node tests/core-invariants.mjs
 echo
 echo "== screen-relative movement (up is the top of the screen, not North) =="
 node tests/screen-relative-move.mjs
+node tests/tap-path.mjs
 echo
 echo "== custody (3 turns to get out of a cell; items, a friend, or luck) =="
 node tests/custody.mjs

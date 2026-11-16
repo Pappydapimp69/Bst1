@@ -123,6 +123,28 @@ export class Renderer {
     return (gy - this.center.y) * TILE_W;
   }
 
+  // The map square under a point on screen, by casting from the camera to the
+  // floor: what a tap or a drawn line lands on. Null above the horizon.
+  screenToTile(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    this.camera.updateMatrixWorld();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), this.camera);
+    const o = ray.ray.origin, d = ray.ray.direction;
+    if (d.y > -1e-6) return null;
+    const t = -o.y / d.y;
+    return { x: Math.round((o.x + d.x * t) / TILE_W + this.center.x), y: Math.round((o.z + d.z * t) / TILE_W + this.center.y) };
+  }
+
+  // Where a map square sits on screen, in page pixels (the inverse of the above).
+  tileToScreen(gx, gy) {
+    const rect = this.canvas.getBoundingClientRect();
+    this.camera.updateMatrixWorld();
+    const v = new THREE.Vector3(this.worldX(gx), 0, this.worldZ(gy)).project(this.camera);
+    return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+  }
+
   // Which world cardinal (0=N,1=E,2=S,3=W) currently points toward the given
   // SCREEN direction (0=up, 1=right, 2=down, 3=left)?
   //

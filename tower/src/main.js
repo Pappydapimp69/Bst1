@@ -37,6 +37,7 @@ import { Input } from "./input.js";
 import { Audio } from "./audio.js";
 import { UI } from "./ui.js";
 import { Tutorial, LESSONS } from "./tutorial.js";
+import { pathToward, extendByDrag } from "./tapPath.js";
 
 const BUILD = "beta-0.58.0";
 
@@ -301,7 +302,8 @@ function boot() {
     },
     (dz) => {
       app.renderer.orbit.dist = clamp(app.renderer.orbit.dist + dz, 6, 30);
-    }
+    },
+    { down: pathGestureDown, move: pathGestureMove, up: pathGestureUp, tap: pathGestureTap }
   );
 
   wireMenu();
@@ -863,7 +865,7 @@ function hintFor() {
     if (prisoner) {
       return staged
         ? "Tap arrows to extend/undo the path  ·  Commit: move for real  ·  View: change camera"
-        : "Tap arrows to plan a path  ·  💥: arm a window break, then tap a direction" + (carrying ? "  ·  tap an item, then a direction" : "") + "  ·  End: end turn  ·  View: change camera";
+        : "Tap a square to plan a path, or draw one from your prisoner  ·  tap its end to go  ·  💥: arm a window break, then tap next to you" + (carrying ? "  ·  tap an item, then a direction" : "") + "  ·  End: end turn  ·  View: change camera";
     }
     return "Rotate / bluff with the buttons  ·  tap a skill to arm/use it  ·  targeted skills then need a direction  ·  Scan: end turn";
   }
@@ -1795,6 +1797,82 @@ function stagePathExtend(dir) {
   app.audio.play("move");
   app.ui.hint(hintFor());
   updateCommitButton();
+}
+
+// ---- Tap and draw ---------------------------------------------------------
+// The same staged path the keys build, made by pointing at the floor: tap a
+// square to plan the walk to it, or press on your prisoner (or the end of the
+// plan) and draw the line. Tapping the end of the plan walks it. A press that
+// starts anywhere else still turns the camera.
+function pathPlanner() {
+  const g = app.game;
+  if (!app.running || !g || isOver(g) || app.cutsceneActive || g.turn !== "Prisoner" || !humanControlsPrisoner()) return null;
+  const p = g.prisoners[g.activePrisoner];
+  if (!p || !p.alive || p.escaped || p.custody) return null;
+  return { g, p };
+}
+function setStagedPath(path) {
+  const grew = path.length > app.stagedPath.length;
+  if (path === app.stagedPath) return;
+  app.stagedPath = path;
+  if (path.length) app.tutorial?.emit("planned");
+  app.audio.play(grew || !path.length ? "move" : "ui");
+  app.ui.hint(hintFor());
+  updateCommitButton();
+}
+let drawStart = null; // the square a drawn line began on, while it is being drawn
+let drawMoved = false;
+function pathGestureDown(x, y) {
+  const ctx = pathPlanner();
+  const tile = ctx && app.renderer.screenToTile(x, y);
+  if (!tile || armedItem || breakArmed) return false;
+  const tip = app.stagedPath.length ? app.stagedPath[app.stagedPath.length - 1] : ctx.p;
+  const onMe = tile.x === ctx.p.x && tile.y === ctx.p.y;
+  if (!onMe && !(tile.x === tip.x && tile.y === tip.y)) return false;
+  app.audio.resume();
+  drawStart = { ...tile, onMe };
+  drawMoved = false;
+  return true;
+}
+function pathGestureMove(x, y) {
+  const ctx = pathPlanner();
+  const tile = ctx && drawStart && app.renderer.screenToTile(x, y);
+  if (!tile) return;
+  if (!drawMoved) {
+    if (tile.x === drawStart.x && tile.y === drawStart.y) return;
+    drawMoved = true;
+    // A line drawn from the prisoner replaces the plan; one from its end carries it on.
+    if (drawStart.onMe && app.stagedPath.length) setStagedPath([]);
+  }
+  setStagedPath(extendByDrag(ctx.g, ctx.p, app.stagedPath, tile, ctx.p.mp));
+}
+function pathGestureUp() {
+  const start = drawStart;
+  drawStart = null;
+  if (!start || drawMoved || !pathPlanner() || !app.stagedPath.length) return;
+  // A press that never left its square is a tap on it: on the end of the plan
+  // it means go, on the prisoner it means forget the plan.
+  if (start.onMe) setStagedPath([]);
+  else commitStagedPath();
+}
+function pathGestureTap(x, y) {
+  const ctx = pathPlanner();
+  const tile = ctx && app.renderer.screenToTile(x, y);
+  if (!tile) return;
+  app.audio.resume();
+  const { g, p } = ctx;
+  const dir = DIR_VEC.findIndex((v) => p.x + v.dx === tile.x && p.y + v.dy === tile.y);
+  // Next to the prisoner, a tap is also how touch aims an armed item or a
+  // window break, and how it works a door or a switch, as a direction key does.
+  if (dir >= 0 && armedItem) { const kind = armedItem; armedItem = null; updateItemBar(); doUseItem(kind, dir); return refreshAfterTap(); }
+  if (dir >= 0 && breakArmed) { breakArmed = false; updateBreakToggleUI(); doBreakWindow(dir); return refreshAfterTap(); }
+  const obj = objAt(g, tile.x, tile.y);
+  if (dir >= 0 && !app.stagedPath.length && (obj === OBJ.SWITCH || (obj === OBJ.DOOR && !isDoorOpen(g, tile.x, tile.y)))) { stagePathExtend(dir); return refreshAfterTap(); }
+  setStagedPath(pathToward(g, p, tile, p.mp));
+}
+function refreshAfterTap() {
+  app.ui.updateHud(app.game, app.viewMode, humanLabel(), shouldShowWatcherInfo(), humanControlsCurrentTurn(), app.stagedFacing, shouldRevealGaze());
+  app.ui.renderLog(app.game, shouldShowWatcherInfo());
 }
 
 // Replay the staged steps as real moves, in order — the same events/audio the

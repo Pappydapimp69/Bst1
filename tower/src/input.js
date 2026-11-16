@@ -150,29 +150,51 @@ export class Input {
     });
   }
 
-  bindCanvasOrbit(canvas, onOrbit, onZoom) {
-    const start = (x, y) => { this.orbitDrag = true; this.lastX = x; this.lastY = y; };
+  // One finger or the mouse on the canvas. `gesture` (optional) gets first
+  // refusal: if its down() claims the press (it began on the prisoner, to draw
+  // a path), the camera stays still and the moves go to it; otherwise the drag
+  // orbits the camera as before, and a press that barely moved is reported to
+  // gesture.tap() with where it went DOWN, since a release drifts.
+  bindCanvasOrbit(canvas, onOrbit, onZoom, gesture = null) {
+    let claimed = false, downX = 0, downY = 0, downAt = 0, travelled = 0, lastTouch = 0;
+    const start = (x, y) => {
+      downX = this.lastX = x; downY = this.lastY = y; downAt = performance.now(); travelled = 0;
+      claimed = !!(gesture && gesture.down(x, y));
+      this.orbitDrag = !claimed;
+    };
     const move = (x, y) => {
+      if (claimed) { gesture.move(x, y); return; }
       if (!this.orbitDrag) return;
+      travelled += Math.abs(x - this.lastX) + Math.abs(y - this.lastY);
       onOrbit((x - this.lastX) * 0.008, (y - this.lastY) * 0.006);
       this.lastX = x; this.lastY = y;
     };
-    const end = () => (this.orbitDrag = false);
-    canvas.addEventListener("mousedown", (e) => start(e.clientX, e.clientY));
-    window.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
-    window.addEventListener("mouseup", end);
+    const end = () => {
+      if (claimed) { claimed = false; gesture.up(); return; }
+      if (!this.orbitDrag) return;
+      this.orbitDrag = false;
+      if (gesture && travelled < 10 && performance.now() - downAt < 500) gesture.tap(downX, downY);
+    };
+    // A touch is followed by a made-up mouse press; without this a tap would count twice.
+    const fromTouch = () => performance.now() - lastTouch < 800;
+    canvas.addEventListener("mousedown", (e) => { if (!fromTouch()) start(e.clientX, e.clientY); });
+    window.addEventListener("mousemove", (e) => { if (!fromTouch()) move(e.clientX, e.clientY); });
+    window.addEventListener("mouseup", () => { if (!fromTouch()) end(); });
     canvas.addEventListener("wheel", (e) => { e.preventDefault(); onZoom(Math.sign(e.deltaY) * 1.2); }, { passive: false });
     let pinch = 0;
     canvas.addEventListener("touchstart", (e) => {
+      lastTouch = performance.now();
       this._setScheme("touch");
       if (e.touches.length === 1) start(e.touches[0].clientX, e.touches[0].clientY);
-      else if (e.touches.length === 2) pinch = touchDist(e);
+      else if (e.touches.length === 2) { if (claimed) { claimed = false; gesture.up(); } this.orbitDrag = false; pinch = touchDist(e); }
     }, { passive: true });
     canvas.addEventListener("touchmove", (e) => {
+      lastTouch = performance.now();
       if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY);
       else if (e.touches.length === 2) { const d = touchDist(e); onZoom((pinch - d) * 0.03); pinch = d; }
     }, { passive: true });
-    canvas.addEventListener("touchend", end);
+    canvas.addEventListener("touchend", () => { lastTouch = performance.now(); end(); });
+    canvas.addEventListener("touchcancel", () => { lastTouch = performance.now(); claimed = false; this.orbitDrag = false; });
   }
 
   // Called every frame. Reads the pad once, marks the scheme on any activity,
