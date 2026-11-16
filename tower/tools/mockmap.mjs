@@ -7,7 +7,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { makeStream, next } from '../../src/rng.js';
 
 const N = 35, C = 17, S = 20;
-const seed = process.argv[2] || 'v2-65';
+const seed = process.argv[2] || 'v4-87';
 const rng = makeStream(seed, 'map');
 const pick = (n) => Math.floor(next(rng) * n);
 const FLOOR = '.', FENCE = 'f', SOLID = '#', DOOR = 'D', GLASS = 'G', TOWER = 'T', YARD = 'y', LAMP = 'L', EXIT = 'E';
@@ -28,57 +28,73 @@ function boundary(d) {
   for (let i = d - 1; i > -d; i--) out.push([C - d, C + i]);
   return out;
 }
-// Each boundary gets five crossings spread round it (one open gap, two locked
-// doors, two windows) and solid stretches between them that cast shadows.
+// The plan follows a radial prison: each ring is a row of cells divided by
+// straight solid walls running out from the tower, and each cell's side that
+// faces the tower is barred, so the tower looks into the cell while the walls
+// between cells hide one from the next. A cell's back wall is solid.
+const BANDS = [[5, 7], [9, 11], [13, 16]];        // the floor of each ring, by distance from the centre
+const RINGWALLS = [8, 12];                         // the walls between rings
+const side = (x, y) => { const dx = x - C, dy = y - C; return Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? 0 : 2) : (dx > 0 ? 1 : 3); };
+const along = (x, y) => [x - C, y - C, C - x, C - y][side(x, y)]; // position along a side, left to right as seen from the tower
+const place = (s, k, d) => [[C + k, C - d], [C + d, C + k], [C - k, C + d], [C - d, C - k]][s];
+
+// Cell walls: on each side of each ring, straight walls spaced by equal
+// angle from the tower, as cells are in a round prison. Near the middle of a
+// side a wall is nearly edge-on to the tower and hides little, so walls can be
+// close there; toward the corners they turn across the line of sight and cast
+// long shadows, so equal angles space them further apart.
+const cellWalls = [];
+for (const [lo, hi, step] of [[5, 7, 30], [9, 11, 14], [13, 16, 11]]) {
+  for (let s = 0; s < 4; s++) {
+    const r = (lo + hi) / 2, phase = (next(rng) - 0.5) * step;
+    let last = -Infinity;
+    for (let a = -45 + ((phase + 45) % step + step) % step; a < 45; a += step) {
+      const k = Math.round(r * Math.tan(a * Math.PI / 180));
+      if (Math.abs(k) > hi - 2 || k - last < 3) continue;
+      // The wall runs from the back wall toward the tower and stops one square
+      // short, leaving a walkway along the barred front, as the gallery in front
+      // of the cells in a radial prison: the way round the ring, in full view.
+      for (let d = lo + 1; d <= hi; d++) { const [x, y] = place(s, k, d); t[y][x] = SOLID; }
+      cellWalls.push({ s, k, lo, hi });
+      last = k;
+    }
+  }
+}
+// Ring walls: barred all along, so the tower sees across every walkway, with
+// solid corner pillars where the sides meet.
+for (const d of RINGWALLS) {
+  for (let s = 0; s < 4; s++) for (let k = -d; k <= d; k++) {
+    const [x, y] = place(s, k, d);
+    t[y][x] = Math.abs(k) >= d - 1 ? SOLID : FENCE;
+  }
+}
+// Five crossings in each ring wall, spread round it, each in the middle of a
+// stretch of wall so it is a clear opening: one gap, two locked doors, two windows.
 const crossings = [];
-for (const d of [8, 12]) {
+for (const d of RINGWALLS) {
   const b = boundary(d), kinds = [FLOOR, DOOR, GLASS, DOOR, GLASS], start = pick(b.length);
-  const cross = kinds.map((k, i) => (start + Math.floor((i + 0.15 + next(rng) * 0.7) * b.length / 5)) % b.length);
-  cross.forEach((where, i) => { const [x, y] = b[where]; t[y][x] = kinds[i]; });
-  // Between the crossings the wall alternates solid stretches, which hide
-  // what is behind them, with barred ones the tower sees through. Windows and
-  // the open gap sit in solid wall, so each is a clear break in it.
-  let run = 0, solid = true;
-  for (let i = 0; i < b.length; i++) {
-    const [x, y] = b[(start + i) % b.length];
-    if (run <= 0) { solid = !solid; run = d === 8 ? (solid ? 1 + pick(2) : 4 + pick(4)) : (solid ? 3 + pick(3) : 2 + pick(3)); }
-    run--;
-    if (t[y][x] === FENCE && solid) t[y][x] = SOLID;
-  }
-  for (const where of cross) for (const o of [-1, 1]) { const [x, y] = b[(where + o + b.length) % b.length]; if (t[y][x] === FENCE) t[y][x] = SOLID; }
-  crossings.push(...cross.map((where) => b[where]));
+  kinds.forEach((kind, i) => {
+    for (let tries = 0; tries < 30; tries++) {
+      const [x, y] = b[(start + Math.floor((i + 0.2 + next(rng) * 0.6) * b.length / 5)) % b.length];
+      const inside = place(side(x, y), along(x, y), d - 1), outside = place(side(x, y), along(x, y), d + 1);
+      if (![inside, outside].every(([a, c]) => t[c][a] === FLOOR)) continue;
+      t[y][x] = kind; crossings.push([x, y]); break;
+    }
+  });
 }
-// Solid partition walls pointing at the tower divide each ring into cells, as
-// the walls between cells do in a radial prison. Edge-on to the tower they
-// hide almost nothing from it, but they stop movement round the ring except
-// through one opening each: a plain gap, or sometimes a locked door.
-for (const [lo, hi, cells] of [[5, 7, 4], [9, 11, 10], [13, 16, 16]]) {
-  const turn = next(rng) * Math.PI * 2, gapless = pick(cells);
-  for (let c = 0; c < cells; c++) {
-    const a = turn + (c + (next(rng) - 0.5) * 0.35) * Math.PI * 2 / cells, ux = Math.cos(a), uy = Math.sin(a), m = Math.max(Math.abs(ux), Math.abs(uy));
-    const tiles = [];
-    for (let d = lo; d <= hi; d++) tiles.push([C + Math.round(ux * d / m), C + Math.round(uy * d / m)]);
-    if (tiles.some(([x, y]) => crossings.some(([cx, cy]) => Math.max(Math.abs(cx - x), Math.abs(cy - y)) <= 2))) continue;
-    const gap = pick(tiles.length);
-    tiles.forEach(([x, y], i) => { if (t[y][x] === FLOOR) t[y][x] = i !== gap ? SOLID : c !== gapless && next(rng) < 0.3 ? DOOR : FLOOR; });
-  }
-}
-// Inside the rings: lone solid blocks to hide behind, and lamps.
-function scatter(count, place) {
-  for (let tries = 0, done = 0; done < count && tries < 4000; tries++) {
-    const x = 1 + pick(N - 2), y = 1 + pick(N - 2);
-    if (t[y][x] === FLOOR && place(x, y)) done++;
-  }
-}
-const free = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].every(([a, b]) => [FLOOR, FENCE].includes(at(x + a, y + b)));
-scatter(9, (x, y) => free(x, y) && (t[y][x] = SOLID));
+// Lamps: about one cell in three has a lamp hung on its back wall.
 const lamps = [];
-scatter(11, (x, y) => free(x, y) && lamps.every((l) => Math.hypot(l.x - x, l.y - y) > 7) && (t[y][x] = LAMP) && lamps.push({ x, y }));
-const exitSide = pick(4), [ex, ey] = [[C + pick(9) - 4, 0], [N - 1, C + pick(9) - 4], [C + pick(9) - 4, N - 1], [0, C + pick(9) - 4]][exitSide];
+for (const w of cellWalls) {
+  if (next(rng) > 0.38) continue;
+  const [x, y] = place(w.s, w.k + 2, w.hi);
+  if (t[y][x] === FLOOR && lamps.every((l) => Math.hypot(l.x - x, l.y - y) > 5)) { t[y][x] = LAMP; lamps.push({ x, y }); }
+}
+const exitSide = pick(4);
+let [ex, ey] = place(exitSide, pick(9) - 4, 17);
 t[ey][ex] = EXIT;
-{ const inx = ex + Math.sign(C - ex) * (ex === 0 || ex === N - 1), iny = ey + Math.sign(C - ey) * (ey === 0 || ey === N - 1); t[iny][inx] = FLOOR; }
-const spawn = [[C + 1, C + 6], [C - 6, C + 1], [C - 1, C - 6], [C + 6, C - 1]][exitSide];
-for (const [a, b] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (t[spawn[1] + b][spawn[0] + a] !== LAMP) t[spawn[1] + b][spawn[0] + a] = FLOOR;
+{ const [x, y] = place(exitSide, along(ex, ey), 16); t[y][x] = FLOOR; }
+const spawn = place((exitSide + 2) % 4, 0, 6);
+t[spawn[1]][spawn[0]] = FLOOR;
 const gaze = exitSide; // the tower is looking at the side the gate is on, so the way out runs through its view
 
 // Sight: a straight line from the tower's centre, stopped by anything solid.
@@ -94,7 +110,7 @@ const inGaze = (x, y) => { const dx = x - C, dy = y - C; return [dy < 0 && Math.
 const walk = (k) => k === FLOOR || k === EXIT;
 const state = t.map((row, y) => row.map((k, x) => {
   if (!walk(k)) return '';
-  const lit = lamps.some((l) => Math.max(Math.abs(l.x - x), Math.abs(l.y - y)) <= 3 && clear(l.x, l.y, x, y));
+  const lit = lamps.some((l) => Math.hypot(l.x - x, l.y - y) <= 3.2 && clear(l.x, l.y, x, y));
   if (!inGaze(x, y)) return lit ? 'lit' : '';
   return !clear(C, C, x, y) ? 'hidden' : lit ? 'exposed' : 'dark';
 }));
@@ -150,7 +166,7 @@ for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
   const across = Math.abs(y - C) > Math.abs(x - C); // the boundary runs left to right here
   const bar = () => across ? `<rect x="${x * S}" y="${y * S + 8.5}" width="${S}" height="3" class="fence"/>` : `<rect x="${x * S + 8.5}" y="${y * S}" width="3" height="${S}" class="fence"/>`;
   if (k === FENCE) g += Math.abs(y - C) === Math.abs(x - C) ? `<rect x="${x * S + 8.5}" y="${y * S + 8.5}" width="3" height="3" class="fence"/><rect x="${x * S + (x > C ? 0 : 8.5)}" y="${y * S + 8.5}" width="11.5" height="3" class="fence"/><rect x="${x * S + 8.5}" y="${y * S + (y > C ? 0 : 8.5)}" width="3" height="11.5" class="fence"/>` : bar();
-  if (k === SOLID) g += `<rect x="${x * S + 1}" y="${y * S + 1}" width="${S - 2}" height="${S - 2}" rx="2" class="solid"/>`;
+  if (k === SOLID) g += `<rect x="${x * S}" y="${y * S}" width="${S}" height="${S}" class="solid"/>`;
   if (k === DOOR) g += bar() + `<rect x="${x * S + 3}" y="${y * S + 3}" width="${S - 6}" height="${S - 6}" rx="2" class="door"/><circle cx="${x * S + S / 2}" cy="${y * S + S / 2}" r="2.4" class="keyhole"/>`;
   if (k === GLASS) g += bar() + `<rect x="${x * S + 3}" y="${y * S + 3}" width="${S - 6}" height="${S - 6}" rx="1" class="glass"/><path d="M${x * S + 5} ${y * S + S - 5} L${x * S + S - 5} ${y * S + 5}" class="pane"/>`;
   if (k === LAMP) g += `<circle cx="${x * S + S / 2}" cy="${y * S + S / 2}" r="5" class="lamp"/>`;
@@ -167,7 +183,7 @@ ${g}${wedge}<polyline points="${pts(quiet)}" class="path quiet"/><polyline point
 
 const sw = (inner) => `<svg viewBox="0 0 20 20" aria-hidden="true"><defs><pattern id="hatchk" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="hatchbg"/><rect width="2.2" height="6" class="hatchline"/></pattern></defs>${inner}</svg>`;
 const legend = [
-  [sw(`<rect width="20" height="20" class="floor"/><rect x="0" y="8.5" width="20" height="3" class="fence"/>`), 'Fence', 'Stops you, not the gaze. Divides the rings.'],
+  [sw(`<rect width="20" height="20" class="floor"/><rect x="0" y="8.5" width="20" height="3" class="fence"/>`), 'Bars', 'The side of a cell that faces the tower. Stops you, not the gaze.'],
   [sw(`<rect width="20" height="20" class="floor"/><rect x="1" y="1" width="18" height="18" rx="2" class="solid"/>`), 'Solid wall', 'Stops you and the gaze. Casts a shadow away from the tower.'],
   [sw(`<rect width="20" height="20" class="floor"/><rect width="20" height="20" fill="url(#hatchk)"/>`), 'Hidden', 'Inside the gaze but behind something solid. Safe, lit or not.'],
   [sw(`<rect width="20" height="20" class="floor lit"/><rect width="20" height="20" class="exposed"/><circle cx="10" cy="10" r="2.2" class="dot"/>`), 'Exposed', 'In the gaze, in the open and lit. Caught on the scan.'],
@@ -180,8 +196,8 @@ const html = `<title>Opticon Mock Map</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
   /* One night plan of the prison, centred, with its key underneath. A single dark look by choice: the map is a night scene. */
-  :root { --night: #0e131f; --panel: #161d2e; --floor: #1d2740; --floorlit: #4a4226; --line: #33405f; --ink: #e8e4d6; --dim: #9aa5bf;
-    --stone: #c9c2ae; --fence: #6f7fa6; --door: #d9962f; --glass: #6fd0e0; --lamp: #ffd35a; --eye: #e5533c; --quiet: #86e0b4; --loud: #6fd0e0;
+  :root { --night: #0e131f; --panel: #161d2e; --floor: #1d2740; --floorlit: #3a3626; --line: #33405f; --ink: #e8e4d6; --dim: #9aa5bf;
+    --stone: #a9a390; --fence: #6f7fa6; --door: #d9962f; --glass: #6fd0e0; --lamp: #ffd35a; --eye: #e5533c; --quiet: #86e0b4; --loud: #6fd0e0;
     --display: "Space Grotesk", system-ui, sans-serif; --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: dark; }
   body { background: var(--night); color: var(--ink); font: 15px/1.5 var(--body); padding-block: 20px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   main { max-width: 46rem; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
@@ -211,7 +227,7 @@ const html = `<title>Opticon Mock Map</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@600;700&display=swap">
 <main>
   <h1>Opticon mock map</h1>
-  <p>The tower's eye is looking ${['north', 'east', 'south', 'west'][gaze]}, between the dotted red lines. You are the white dot in the inner ring, and the gate, marked G, is on the outer wall. <b>Each ring wall can only be crossed at five places:</b> one open gap, two locked doors and two windows. Solid walls pointing at the tower divide every ring into cells.</p>
+  <p>The tower's eye is looking ${['north', 'east', 'south', 'west'][gaze]}, between the dotted red lines. You are the white dot in the inner ring, and the gate, marked G, is on the outer wall. Each ring is a row of cells, divided by solid walls that run out from the tower, opening onto a walkway behind bars that faces the tower: the walkway is the way round the ring and is always in view, while the cells hide you once you step into them. <b>Each ring wall can only be crossed at five places:</b> one open gap, two locked doors and two windows.</p>
   <div class="map">${svg}</div>
   <div class="routes">
     <div><h2>Quiet route, solid line</h2><p>${quiet.length - 1} steps through ${some(through(quiet, DOOR), 'locked door')}, crossing ${some(count(quiet, 'exposed'), 'exposed square')}. Needs picks.</p></div>
