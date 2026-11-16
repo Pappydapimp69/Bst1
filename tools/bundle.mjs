@@ -10,6 +10,8 @@ const GAMES = {
     order: ['src/rng', 'src/sim', 'src/bot', 'src/loop', 'src/camera', 'src/input', 'src/audio', 'src/render', 'src/save', 'src/main'] },
   crab: { page: 'crab/index.html', out: 'dist/crab-castle.html',
     order: ['src/rng', 'crab/src/sim', 'crab/src/bot', 'src/loop', 'src/input', 'src/audio', 'src/save', 'crab/src/render', 'crab/src/main'] },
+  seen: { page: 'seen/index.html', out: 'dist/seen.html',
+    order: ['src/rng', 'seen/src/sim', 'src/save', 'seen/src/main'] },
 };
 const game = GAMES[process.argv[2] || 'glowmoth'];
 if (!game) throw new Error(`unknown game; choose one of ${Object.keys(GAMES).join(', ')}`);

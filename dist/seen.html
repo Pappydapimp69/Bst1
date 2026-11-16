@@ -1,0 +1,462 @@
+<title>Seen</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* One night scene: the tower above, three doors below, and a bar of hours running out to dawn. */
+  :root { --night: #0d1220; --wall: #1a2236; --stone: #2a3552; --ink: #e9e4d4; --dim: #9aa3ba; --lamp: #f2b84b; --eye: #e2553d; --free: #7fc8a9;
+    --display: Georgia, "Iowan Old Style", "Times New Roman", serif; --body: system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--night); color: var(--ink); font: 16px/1.45 var(--body); }
+  body { display: flex; justify-content: center; padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+  main { width: min(100%, 34rem); display: flex; flex-direction: column; gap: 14px; min-height: calc(100dvh - 32px); }
+  #top { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--dim); letter-spacing: .04em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+  #bar { flex: 1; height: 10px; border-radius: 6px; background: var(--wall); overflow: hidden; border: 1px solid var(--stone); }
+  #dawn { height: 100%; width: 0; background: linear-gradient(90deg, #3b4a78, var(--lamp)); transition: width .5s ease; }
+  #tower { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 4px; }
+  #tower svg { width: 120px; height: 96px; display: block; }
+  #pupil { transition: transform .5s ease; }
+  #lid { transition: transform .35s ease; transform-origin: 60px 40px; }
+  #tower.blink #lid { transform: scaleY(.1); }
+  #say { min-height: 3.2em; margin: 0; text-align: center; font: italic 20px/1.3 var(--display); text-wrap: balance; }
+  #say b { font-style: normal; color: var(--eye); }
+  #doors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: end; flex: 1; min-height: 210px; max-height: 320px; }
+  .door { position: relative; height: 100%; min-height: 190px; border: 2px solid var(--stone); border-bottom-width: 6px; border-radius: 80px 80px 6px 6px;
+    background: linear-gradient(#141b2d, #0a0e19); color: var(--ink); font: 600 15px var(--body); cursor: pointer; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; padding: 0 4px 14px;
+    transition: transform .15s ease, border-color .2s, background .3s; -webkit-tap-highlight-color: transparent; }
+  .door:hover:not(:disabled), .door:focus-visible { border-color: var(--ink); transform: translateY(-3px); outline: none; }
+  .door:disabled { cursor: default; }
+  .door .lamp { position: absolute; top: 22%; width: 14px; height: 14px; border-radius: 50%; background: var(--stone); }
+  .door.short { background: linear-gradient(#3a2f1c, #17140f 75%); border-color: #6b5a34; }
+  .door.short .lamp { background: var(--lamp); box-shadow: 0 0 22px 8px rgba(242,184,75,.45); }
+  .door .hours { font-size: 13px; color: var(--dim); }
+  .door.short .hours { color: var(--lamp); }
+  .door .tag { position: absolute; top: -12px; font: 700 11px var(--body); letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 10px; background: var(--eye); color: #1a0d0a; opacity: 0; }
+  .door.named .tag.name, .door.sealed .tag.seal { opacity: 1; }
+  .door .tag.seal { top: auto; bottom: -14px; background: var(--ink); }
+  .door.sealed { border-color: var(--ink); }
+  .door.picked { transform: translateY(-8px); border-color: var(--free); }
+  .door.picked.sealed { border-color: var(--eye); background: linear-gradient(#4a1c16, #170b0a 75%); }
+  #note { min-height: 3em; margin: 0; text-align: center; color: var(--dim); text-wrap: balance; }
+  #note.seen { color: var(--eye); } #note.free { color: var(--free); }
+  #card { background: var(--wall); border: 1px solid var(--stone); border-radius: 14px; padding: 20px 20px 18px; display: flex; flex-direction: column; gap: 10px; }
+  #card[hidden], #play[hidden] { display: none; }
+  #play { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+  #card h1 { margin: 0; font: 400 clamp(34px, 9vw, 48px)/1 var(--display); }
+  #card h1.dawn { color: var(--lamp); } #card h1.escaped { color: var(--free); }
+  #card p { margin: 0; text-wrap: pretty; }
+  #card h2 { margin: 8px 0 0; font: 700 12px var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  #marks { display: flex; gap: 5px; flex-wrap: wrap; margin: 4px 0; }
+  #marks i { width: 20px; height: 26px; border-radius: 10px 10px 2px 2px; border: 2px solid var(--stone); }
+  #marks i.seen { background: var(--eye); border-color: var(--eye); }
+  #marks i.free { border-color: var(--free); }
+  #habits { margin: 0; padding-left: 1.1em; font: italic 17px/1.4 var(--display); }
+  #habits span { font: 13px var(--body); color: var(--dim); white-space: nowrap; }
+  #truth { font-size: 14px; color: var(--dim); border-top: 1px solid var(--stone); padding-top: 10px; margin-top: 6px !important; }
+  #actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  #actions button { font: 600 15px var(--body); color: var(--night); background: var(--ink); border: 0; border-radius: 10px; padding: 10px 18px; min-height: 44px; cursor: pointer; }
+  #actions button.quiet { background: transparent; color: var(--dim); border: 1px solid var(--stone); }
+  #actions button:focus-visible { outline: 3px solid var(--lamp); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<main>
+  <div id="play" hidden>
+    <div id="top"><span id="room">Room 1 of 12</span><div id="bar" role="img" aria-label="Hours until dawn"><div id="dawn"></div></div><span id="left">29 h to dawn</span></div>
+    <div id="tower">
+      <svg viewBox="0 0 120 96" aria-hidden="true">
+        <path d="M38 96 L44 58 H76 L82 96 Z" fill="#1a2236"/><path d="M30 58 H90 L84 22 H36 Z" fill="#2a3552"/><path d="M32 22 L60 4 L88 22 Z" fill="#1a2236"/>
+        <ellipse cx="60" cy="40" rx="20" ry="11" fill="#0d1220"/>
+        <g id="lid"><ellipse cx="60" cy="40" rx="17" ry="8.5" fill="#e9e4d4"/><g id="pupil"><circle cx="60" cy="40" r="6.5" fill="#e2553d"/><circle cx="60" cy="40" r="2.6" fill="#0d1220"/></g></g>
+      </svg>
+      <p id="say" aria-live="polite"></p>
+    </div>
+    <div id="doors">
+      <button class="door" data-door="0" aria-label="Left door"><span class="tag name">named</span><span class="lamp"></span><span>Left</span><span class="hours"></span><span class="tag seal">sealed</span></button>
+      <button class="door" data-door="1" aria-label="Middle door"><span class="tag name">named</span><span class="lamp"></span><span>Middle</span><span class="hours"></span><span class="tag seal">sealed</span></button>
+      <button class="door" data-door="2" aria-label="Right door"><span class="tag name">named</span><span class="lamp"></span><span>Right</span><span class="hours"></span><span class="tag seal">sealed</span></button>
+    </div>
+    <p id="note" aria-live="polite"></p>
+  </div>
+  <div id="card">
+    <h1 id="title">Seen</h1>
+    <div id="body"></div>
+    <div id="actions"><button id="go">Begin</button><button id="forget" class="quiet" hidden>Forget me</button></div>
+  </div>
+</main>
+<script type="module">
+// ---- src/rng.js
+// Seeded random streams. Each consumer gets its own stream keyed by a stable
+// name, so adding a consumer never shifts another's draws. A stream's whole
+// state is four integer words, so it saves as plain JSON.
+
+// Hash the seed text first: raw small seeds give alike first draws.
+function hasher(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489917);
+    return (h ^= h >>> 16) >>> 0;
+  };
+}
+
+function makeStream(seed, name) {
+  const h = hasher(String(seed) + ':' + name);
+  const s = [h(), h(), h(), h()];
+  for (let i = 0; i < 12; i++) next(s);
+  return s;
+}
+
+// sfc32 stepped in place on the four words; returns a float in [0, 1).
+function next(s) {
+  let a = s[0] | 0, b = s[1] | 0, c = s[2] | 0, d = s[3] | 0;
+  const t = (((a + b) | 0) + d) | 0;
+  d = (d + 1) | 0;
+  a = b ^ (b >>> 9);
+  b = (c + (c << 3)) | 0;
+  c = (c << 21) | (c >>> 11);
+  c = (c + t) | 0;
+  s[0] = a; s[1] = b; s[2] = c; s[3] = d;
+  return (t >>> 0) / 4294967296;
+}
+
+// ---- seen/src/sim.js
+// Seen: a second-person game. You cross twelve rooms before dawn, choosing one
+// of three doors in each. The tower knows nothing about the rooms that you do
+// not: it only models you. Before every choice it seals a guess at your door;
+// if the guess is right you are seen and held, which costs hours. The whole
+// game is a pure function of the seed, the model it starts with and the picks.
+
+const ROOMS = 12;
+const HOURS = 29;   // dawn: tuned by tests/sim.test.mjs so chance play escapes a little over half the time
+const SHORT = 1;    // hours through the short door
+const LONG = 2;     // hours through either long door
+const HELD = 2;     // hours lost each time the tower's sealed guess was your door
+const HONEST = 0.5; // how often the door the tower names is the door it expects
+
+// What the tower keeps about one person: counts of what they did in each
+// situation, and how far each way of reading them has earned trust.
+function newModel() {
+  return { v: 1, runs: 0, escapes: 0, rooms: 0, hits: 0, tables: {}, weights: {} };
+}
+
+// Each expert reads one aspect of a door (where it is, whether it is the short
+// one, whether the tower named it, how far it is from the last door) in one
+// situation. `ctx` returns the situation as a string, or null if it has none yet.
+const last = (h) => h[h.length - 1];
+const EXPERTS = [
+  { name: 'pos',        aspect: 'pos',   ctx: () => '' },
+  { name: 'posAfter',   aspect: 'pos',   ctx: (h) => (h.length ? 'p' + last(h).pick : null) },
+  { name: 'shift',      aspect: 'shift', ctx: (h) => (h.length ? (last(h).seen ? 'seen' : 'free') : null) },
+  { name: 'short',      aspect: 'short', ctx: () => '' },
+  { name: 'shortAfter', aspect: 'short', ctx: (h) => (h.length ? (last(h).short === last(h).pick ? 's' : 'l') + (last(h).seen ? 'seen' : 'free') : null) },
+  { name: 'shortRun',   aspect: 'short', ctx: (h) => (h.length > 1 ? h.slice(-2).map((r) => (r.short === r.pick ? 's' : 'l')).join('') : null) },
+  { name: 'shortTempo', aspect: 'short', ctx: (h) => (h.length ? (last(h).slow ? 'slow' : 'fast') : null) },
+  { name: 'shortClock', aspect: 'short', ctx: (h, s) => (s.hours + (ROOMS - s.room) * 1.6 > HOURS ? 'late' : 'early') },
+  { name: 'named',      aspect: 'named', ctx: () => '' },
+  { name: 'namedAfter', aspect: 'named', ctx: (h) => (h.length ? (last(h).pick === last(h).claim ? 'took' : 'left') + (last(h).claim === last(h).sealed ? 'true' : 'lie') : null) },
+];
+const USES_CLAIM = (e) => e.aspect === 'named';
+const ETA = 1.5;
+
+// The value of an aspect for door d, and how many of the three doors share it.
+function aspectOf(e, d, s, claim) {
+  const h = s.history;
+  if (e.aspect === 'pos') return [d, 1];
+  if (e.aspect === 'shift') return [(d - last(h).pick + 3) % 3, 1];
+  if (e.aspect === 'short') return d === s.short ? ['y', 1] : ['n', 2];
+  return d === claim ? ['y', 1] : ['n', 2];
+}
+const SIZE = { pos: 3, shift: 3, short: 2, named: 2 };
+
+// One expert's probability for each door, from its counts with one imagined
+// observation spread over the outcomes so nothing is ever impossible.
+function expertDoors(model, e, s, claim) {
+  const c = e.ctx(s.history, s);
+  if (c === null) return null;
+  const row = model.tables[e.name + '|' + c] || {};
+  let n = 0;
+  for (const k in row) n += row[k];
+  const out = [0, 0, 0];
+  for (let d = 0; d < 3; d++) {
+    const [val, share] = aspectOf(e, d, s, claim);
+    out[d] = ((row[val] || 0) + 1 / SIZE[e.aspect]) / (n + 1) / share;
+  }
+  return out;
+}
+
+function mixture(model, s, claim) {
+  const out = [0, 0, 0];
+  let total = 0;
+  for (const e of EXPERTS) {
+    if (claim === null && USES_CLAIM(e)) continue;
+    const p = expertDoors(model, e, s, claim);
+    if (!p) continue;
+    const w = model.weights[e.name] ?? 1;
+    total += w;
+    for (let d = 0; d < 3; d++) out[d] += w * p[d];
+  }
+  return out.map((x) => x / total);
+}
+
+function argmax(p, rng) {
+  let best = [0];
+  for (let d = 1; d < 3; d++) {
+    if (p[d] > p[best[0]] + 1e-12) best = [d];
+    else if (Math.abs(p[d] - p[best[0]]) <= 1e-12) best.push(d);
+  }
+  return best[Math.floor(next(rng) * best.length)];
+}
+
+function createRun(seed, model = newModel()) {
+  const s = {
+    seed: String(seed), rooms: makeStream(seed, 'rooms'), tower: makeStream(seed, 'tower'),
+    room: 0, hours: 0, seen: 0, status: 'play', history: [], model,
+    short: 0, claim: 0, sealed: 0,
+  };
+  enterRoom(s);
+  return s;
+}
+
+// The tower names a door aloud, then seals its real guess, both before the pick.
+function enterRoom(s) {
+  s.short = Math.floor(next(s.rooms) * 3);
+  const first = argmax(mixture(s.model, s, null), s.tower);
+  s.claim = next(s.tower) < HONEST ? first : (first + 1 + Math.floor(next(s.tower) * 2)) % 3;
+  s.sealed = argmax(mixture(s.model, s, s.claim), s.tower);
+}
+
+// Take door `pick` (0 left, 1 middle, 2 right). `slow` is whether the real
+// person hesitated before choosing; it is the one thing here the character
+// in the room does not have.
+function step(s, pick, slow = false) {
+  if (s.status !== 'play' || !(pick >= 0 && pick < 3)) return null;
+  const m = s.model;
+  // Learn: move trust toward the experts that expected this door, then count it.
+  let sum = 0;
+  const grown = {};
+  for (const e of EXPERTS) {
+    const p = expertDoors(m, e, s, s.claim);
+    if (!p) continue;
+    grown[e.name] = (m.weights[e.name] ?? 1) * Math.pow(p[pick] * 3, ETA);
+    sum += grown[e.name];
+  }
+  const names = Object.keys(grown);
+  for (const k of names) m.weights[k] = Math.max(0.02, grown[k] * names.length / sum);
+  for (const e of EXPERTS) {
+    const c = e.ctx(s.history, s);
+    if (c === null) continue;
+    const key = e.name + '|' + c;
+    const [val] = aspectOf(e, pick, s, s.claim);
+    (m.tables[key] ||= {})[val] = (m.tables[key][val] || 0) + 1;
+  }
+  const seen = pick === s.sealed;
+  const cost = (pick === s.short ? SHORT : LONG) + (seen ? HELD : 0);
+  const entry = { room: s.room, short: s.short, claim: s.claim, sealed: s.sealed, pick, seen, slow: !!slow, cost };
+  s.history.push(entry);
+  s.hours += cost;
+  if (seen) { s.seen += 1; m.hits += 1; }
+  m.rooms += 1;
+  s.room += 1;
+  if (s.hours > HOURS) s.status = 'dawn';
+  else if (s.room >= ROOMS) s.status = 'escaped';
+  if (s.status === 'play') enterRoom(s);
+  else { m.runs += 1; if (s.status === 'escaped') m.escapes += 1; }
+  return entry;
+}
+
+// The habits the tower would say aloud: situations it has seen at least
+// `min` times in which you did the same thing at least `sure` of the time.
+const DOOR = ['left', 'middle', 'right'];
+const WORDS = {
+  pos: (c, v) => `You take the ${DOOR[v]} door`,
+  posAfter: (c, v) => `After the ${DOOR[c[1]]} door you take the ${DOOR[v]} one`,
+  shift: (c, v) => `After I ${c === 'seen' ? 'see' : 'miss'} you, you ${v === '0' ? 'take the same door again' : 'change doors'}`,
+  short: (c, v) => `You take the ${v === 'y' ? 'short' : 'long'} way`,
+  shortAfter: (c, v) => `After a ${c[0] === 's' ? 'short' : 'long'} door that I ${c.endsWith('seen') ? 'saw' : 'missed'}, you take the ${v === 'y' ? 'short' : 'long'} way`,
+  shortRun: (c, v) => `After ${c === 'ss' ? 'two short doors' : c === 'll' ? 'two long doors' : c === 'sl' ? 'short then long' : 'long then short'}, you go ${v === 'y' ? 'short' : 'long'}`,
+  shortTempo: (c, v) => `When you ${c === 'slow' ? 'hesitate' : 'choose quickly'}, your next door is the ${v === 'y' ? 'short' : 'long'} way`,
+  shortClock: (c, v) => `When dawn is ${c === 'late' ? 'close' : 'far'}, you take the ${v === 'y' ? 'short' : 'long'} way`,
+  named: (c, v) => `You ${v === 'y' ? 'take' : 'avoid'} the door I name`,
+  namedAfter: (c, v) => `After you ${c.startsWith('took') ? 'took' : 'refused'} my door and I had ${c.endsWith('true') ? 'told the truth' : 'lied'}, you ${v === 'y' ? 'take' : 'avoid'} the door I name`,
+};
+function habits(model, { min = 5, sure = 0.7, most = 3 } = {}) {
+  const found = [];
+  for (const key in model.tables) {
+    const [name, c] = key.split('|');
+    const row = model.tables[key];
+    let n = 0;
+    for (const k in row) n += row[k];
+    if (n < min) continue;
+    for (const v in row) {
+      let count = row[v], value = v;
+      // "Change doors" is the two shifted outcomes together.
+      if (name === 'shift' && v !== '0') { if (v === '2' && row['1']) continue; count = (row['1'] || 0) + (row['2'] || 0); value = '1'; }
+      const chance = name === 'pos' || name === 'posAfter' ? 1 / 3 : name === 'shift' ? (value === '0' ? 1 / 3 : 2 / 3) : value === 'y' ? 1 / 3 : 2 / 3;
+      const rate = count / n;
+      if (rate < sure || rate - chance < 0.2) continue;
+      found.push({ text: WORDS[name](c, value), count, n, lift: rate - chance, aspect: EXPERTS.find((e) => e.name === name).aspect });
+    }
+  }
+  // Strongest first, and one habit for each kind of thing it reads, so the
+  // same habit is not said three ways.
+  found.sort((a, b) => b.lift * Math.sqrt(b.n) - a.lift * Math.sqrt(a.n));
+  const kinds = new Set();
+  return found.filter((f) => !kinds.has(f.aspect) && kinds.add(f.aspect)).slice(0, most);
+}
+
+// ---- src/save.js
+// Settings and best score. Keys are namespaced because the page may share its
+// web origin with other projects, and every access is wrapped because storage
+// can throw (private mode, blocked site data, a full quota).
+const PREFIX = 'bst1.glowmoth.';
+
+function load(key, fallback, store = globalThis.localStorage) {
+  try {
+    const raw = store.getItem(PREFIX + key);
+    return raw === null || raw === undefined ? fallback : JSON.parse(raw);
+  } catch { return fallback; }
+}
+
+function save(key, value, store = globalThis.localStorage) {
+  try { store.setItem(PREFIX + key, JSON.stringify(value)); return true; } catch { return false; }
+}
+
+// The same two calls under another project's prefix, for other games that
+// share this engine and this web origin.
+function createStore(prefix, store) {
+  const at = () => store || globalThis.localStorage;
+  return {
+    load(key, fallback) {
+      try {
+        const raw = at().getItem(prefix + key);
+        return raw === null || raw === undefined ? fallback : JSON.parse(raw);
+      } catch { return fallback; }
+    },
+    save(key, value) {
+      try { at().setItem(prefix + key, JSON.stringify(value)); return true; } catch { return false; }
+    },
+  };
+}
+
+// ---- seen/src/main.js
+// The page around the simulation: it shows the room, times how long the real
+// person takes to choose, and keeps the tower's model of them on this device.
+
+const store = createStore('bst1.seen.');
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const pause = params.has('fast') ? 0 : 1700;   // how long an opened seal stays on screen
+let model = store.load('model.v1', null) || newModel();
+let run = null, mode = 'title', shownAt = 0, locked = false, runCount = 0;
+
+// The tower speaks about "the prisoner" until it has watched a few rooms, then
+// turns to "you": by then what it says is about the person, not the character.
+const knowsYou = () => model.rooms >= 4;
+
+function showRoom() {
+  const doors = document.querySelectorAll('.door');
+  doors.forEach((el, d) => {
+    el.className = 'door' + (d === run.short ? ' short' : '') + (d === run.claim ? ' named' : '');
+    el.querySelector('.hours').textContent = (d === run.short ? SHORT + ' hour' : LONG + ' hours');
+    el.disabled = false;
+  });
+  $('room').textContent = `Room ${run.room + 1} of ${ROOMS}`;
+  $('left').textContent = `${Math.max(0, HOURS - run.hours)} h to dawn`;
+  $('dawn').style.width = Math.min(100, (run.hours / HOURS) * 100) + '%';
+  $('pupil').style.transform = `translateX(${(run.claim - 1) * 7}px)`;
+  $('say').innerHTML = `${knowsYou() ? 'You' : 'The prisoner'} will take the <b>${DOOR[run.claim]}</b> door.`;
+  $('note').className = '';
+  $('note').textContent = run.room === 0 ? 'My guess is already sealed. Choose a door.' : '';
+  locked = false;
+  shownAt = performance.now();
+}
+
+function choose(d) {
+  if (mode !== 'play' || locked) return;
+  locked = true;
+  // Slow means slow for this person: longer than one and a half times their own usual.
+  const took = performance.now() - shownAt;
+  const t = (model.tempo ||= { n: 0, sum: 0 });
+  const slow = t.n >= 3 && took > 1.5 * (t.sum / t.n);
+  t.n += 1; t.sum += Math.min(took, 20000);
+  const before = habits(model, { most: 1 })[0];
+  const e = step(run, d, slow);
+  store.save('model.v1', model);
+  document.querySelectorAll('.door').forEach((el, i) => {
+    el.disabled = true;
+    el.classList.toggle('picked', i === e.pick);
+    el.classList.toggle('sealed', i === e.sealed);
+  });
+  $('tower').classList.toggle('blink', !e.seen);
+  $('dawn').style.width = Math.min(100, (run.hours / HOURS) * 100) + '%';
+  $('left').textContent = `${Math.max(0, HOURS - run.hours)} h to dawn`;
+  const you = knowsYou();
+  const lied = e.claim !== e.sealed ? ` I named another to move ${you ? 'you' : 'them'}.` : '';
+  $('note').className = e.seen ? 'seen' : 'free';
+  $('note').textContent = e.seen
+    ? `I sealed the ${DOOR[e.sealed]} door.${lied} I saw ${you ? 'you' : 'the prisoner'}: ${HELD} hours held.${before && you ? ' ' + before.text + '.' : ''}`
+    : `I sealed the ${DOOR[e.sealed]} door.${lied} ${you ? 'You' : 'The prisoner'} went ${DOOR[e.pick]}, past me.`;
+  setTimeout(() => { $('tower').classList.remove('blink'); run.status === 'play' ? showRoom() : finish(); }, pause);
+}
+
+function finish() {
+  mode = 'over';
+  runCount += 1;
+  const h = run.history, seen = run.seen, escaped = run.status === 'escaped';
+  const known = habits(model);
+  const rate = Math.round((model.hits / model.rooms) * 100);
+  $('play').hidden = true;
+  $('card').hidden = false;
+  $('title').textContent = escaped ? 'Out before dawn' : 'Dawn';
+  $('title').className = escaped ? 'escaped' : 'dawn';
+  $('body').innerHTML = `
+    <p>${escaped ? `You crossed all ${ROOMS} rooms with ${HOURS - run.hours} hours to spare.` : `The light came up in room ${h.length} of ${ROOMS}.`}
+    I had sealed your door in ${seen} of ${h.length} rooms; guessing blind would get about ${Math.round(h.length / 3)}.</p>
+    <div id="marks" role="img" aria-label="Rooms where the sealed guess was your door">${h.map((r) => `<i class="${r.seen ? 'seen' : 'free'}" title="Room ${r.room + 1}: sealed ${DOOR[r.sealed]}, you took ${DOOR[r.pick]}"></i>`).join('')}</div>
+    <h2>What I know about you</h2>
+    ${known.length ? `<ul id="habits">${known.map((k) => `<li>${k.text}. <span>${k.count} times in ${k.n}</span></li>`).join('')}</ul>`
+      : `<p>Nothing I can use yet. ${model.rooms < 20 ? 'I have not watched you long.' : 'You are hard to read.'}</p>`}
+    <p id="truth">There is no one in the tower. It is this game, and it was never watching the prisoner: it has kept what you did in ${model.rooms} rooms over ${model.runs} ${model.runs === 1 ? 'night' : 'nights'},
+    on this device only, and has guessed ${rate}% of your doors. Each guess was fixed before you chose.</p>`;
+  $('go').textContent = 'Another night';
+  $('forget').hidden = false;
+  $('go').focus();
+}
+
+function title() {
+  mode = 'title';
+  $('play').hidden = true;
+  $('card').hidden = false;
+  $('title').textContent = 'Seen';
+  $('title').className = '';
+  $('body').innerHTML = `<p>Twelve rooms stand between a prisoner and the wall, and dawn is ${HOURS} hours off. Each room has three doors: the lit one takes ${SHORT} hour, the others ${LONG}.</p>
+    <p>The tower cannot see into the rooms. Before each choice it seals one guess at the door, and names a door aloud, which may or may not be the one it sealed. If the sealed door is the one taken, the prisoner is held for ${HELD} hours.</p>
+    ${model.runs ? `<p id="truth">I remember you: ${model.runs} ${model.runs === 1 ? 'night' : 'nights'}, ${model.rooms} rooms.</p>` : ''}`;
+  $('go').textContent = 'Begin';
+  $('forget').hidden = !model.runs;
+}
+
+function begin() {
+  const seed = params.get('seed') ? params.get('seed') + ':' + runCount : String(Date.now());
+  run = createRun(seed, model);
+  mode = 'play';
+  $('card').hidden = true;
+  $('play').hidden = false;
+  showRoom();
+}
+
+$('go').addEventListener('click', begin);
+$('forget').addEventListener('click', () => { model = newModel(); store.save('model.v1', model); title(); });
+document.querySelectorAll('.door').forEach((el) => el.addEventListener('click', () => choose(Number(el.dataset.door))));
+addEventListener('keydown', (ev) => {
+  if (ev.repeat || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const d = { 1: 0, 2: 1, 3: 2, ArrowLeft: 0, ArrowDown: 1, ArrowUp: 1, ArrowRight: 2 }[ev.key];
+  if (mode === 'play' && d !== undefined) { ev.preventDefault(); choose(d); }
+  else if (mode !== 'play' && (ev.key === 'Enter' || ev.key === ' ') && document.activeElement?.tagName !== 'BUTTON') { ev.preventDefault(); begin(); }
+});
+
+title();
+window.__game = { get mode() { return mode; }, get locked() { return locked; }, state: () => run, model: () => model };
+</script>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seen</title>
+<style>
+  /* One night scene: the tower above, three doors below, and a bar of hours running out to dawn. */
+  :root { --night: #0d1220; --wall: #1a2236; --stone: #2a3552; --ink: #e9e4d4; --dim: #9aa3ba; --lamp: #f2b84b; --eye: #e2553d; --free: #7fc8a9;
+    --display: Georgia, "Iowan Old Style", "Times New Roman", serif; --body: system-ui, -apple-system, "Segoe UI", sans-serif; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--night); color: var(--ink); font: 16px/1.45 var(--body); }
+  body { display: flex; justify-content: center; padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+  main { width: min(100%, 34rem); display: flex; flex-direction: column; gap: 14px; min-height: calc(100dvh - 32px); }
+  #top { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--dim); letter-spacing: .04em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+  #bar { flex: 1; height: 10px; border-radius: 6px; background: var(--wall); overflow: hidden; border: 1px solid var(--stone); }
+  #dawn { height: 100%; width: 0; background: linear-gradient(90deg, #3b4a78, var(--lamp)); transition: width .5s ease; }
+  #tower { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 4px; }
+  #tower svg { width: 120px; height: 96px; display: block; }
+  #pupil { transition: transform .5s ease; }
+  #lid { transition: transform .35s ease; transform-origin: 60px 40px; }
+  #tower.blink #lid { transform: scaleY(.1); }
+  #say { min-height: 3.2em; margin: 0; text-align: center; font: italic 20px/1.3 var(--display); text-wrap: balance; }
+  #say b { font-style: normal; color: var(--eye); }
+  #doors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: end; flex: 1; min-height: 210px; max-height: 320px; }
+  .door { position: relative; height: 100%; min-height: 190px; border: 2px solid var(--stone); border-bottom-width: 6px; border-radius: 80px 80px 6px 6px;
+    background: linear-gradient(#141b2d, #0a0e19); color: var(--ink); font: 600 15px var(--body); cursor: pointer; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; padding: 0 4px 14px;
+    transition: transform .15s ease, border-color .2s, background .3s; -webkit-tap-highlight-color: transparent; }
+  .door:hover:not(:disabled), .door:focus-visible { border-color: var(--ink); transform: translateY(-3px); outline: none; }
+  .door:disabled { cursor: default; }
+  .door .lamp { position: absolute; top: 22%; width: 14px; height: 14px; border-radius: 50%; background: var(--stone); }
+  .door.short { background: linear-gradient(#3a2f1c, #17140f 75%); border-color: #6b5a34; }
+  .door.short .lamp { background: var(--lamp); box-shadow: 0 0 22px 8px rgba(242,184,75,.45); }
+  .door .hours { font-size: 13px; color: var(--dim); }
+  .door.short .hours { color: var(--lamp); }
+  .door .tag { position: absolute; top: -12px; font: 700 11px var(--body); letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 10px; background: var(--eye); color: #1a0d0a; opacity: 0; }
+  .door.named .tag.name, .door.sealed .tag.seal { opacity: 1; }
+  .door .tag.seal { top: auto; bottom: -14px; background: var(--ink); }
+  .door.sealed { border-color: var(--ink); }
+  .door.picked { transform: translateY(-8px); border-color: var(--free); }
+  .door.picked.sealed { border-color: var(--eye); background: linear-gradient(#4a1c16, #170b0a 75%); }
+  #note { min-height: 3em; margin: 0; text-align: center; color: var(--dim); text-wrap: balance; }
+  #note.seen { color: var(--eye); } #note.free { color: var(--free); }
+  #card { background: var(--wall); border: 1px solid var(--stone); border-radius: 14px; padding: 20px 20px 18px; display: flex; flex-direction: column; gap: 10px; }
+  #card[hidden], #play[hidden] { display: none; }
+  #play { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+  #card h1 { margin: 0; font: 400 clamp(34px, 9vw, 48px)/1 var(--display); }
+  #card h1.dawn { color: var(--lamp); } #card h1.escaped { color: var(--free); }
+  #card p { margin: 0; text-wrap: pretty; }
+  #card h2 { margin: 8px 0 0; font: 700 12px var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  #marks { display: flex; gap: 5px; flex-wrap: wrap; margin: 4px 0; }
+  #marks i { width: 20px; height: 26px; border-radius: 10px 10px 2px 2px; border: 2px solid var(--stone); }
+  #marks i.seen { background: var(--eye); border-color: var(--eye); }
+  #marks i.free { border-color: var(--free); }
+  #habits { margin: 0; padding-left: 1.1em; font: italic 17px/1.4 var(--display); }
+  #habits span { font: 13px var(--body); color: var(--dim); white-space: nowrap; }
+  #truth { font-size: 14px; color: var(--dim); border-top: 1px solid var(--stone); padding-top: 10px; margin-top: 6px !important; }
+  #actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  #actions button { font: 600 15px var(--body); color: var(--night); background: var(--ink); border: 0; border-radius: 10px; padding: 10px 18px; min-height: 44px; cursor: pointer; }
+  #actions button.quiet { background: transparent; color: var(--dim); border: 1px solid var(--stone); }
+  #actions button:focus-visible { outline: 3px solid var(--lamp); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <div id="play" hidden>
+    <div id="top"><span id="room">Room 1 of 12</span><div id="bar" role="img" aria-label="Hours until dawn"><div id="dawn"></div></div><span id="left">29 h to dawn</span></div>
+    <div id="tower">
+      <svg viewBox="0 0 120 96" aria-hidden="true">
+        <path d="M38 96 L44 58 H76 L82 96 Z" fill="#1a2236"/><path d="M30 58 H90 L84 22 H36 Z" fill="#2a3552"/><path d="M32 22 L60 4 L88 22 Z" fill="#1a2236"/>
+        <ellipse cx="60" cy="40" rx="20" ry="11" fill="#0d1220"/>
+        <g id="lid"><ellipse cx="60" cy="40" rx="17" ry="8.5" fill="#e9e4d4"/><g id="pupil"><circle cx="60" cy="40" r="6.5" fill="#e2553d"/><circle cx="60" cy="40" r="2.6" fill="#0d1220"/></g></g>
+      </svg>
+      <p id="say" aria-live="polite"></p>
+    </div>
+    <div id="doors">
+      <button class="door" data-door="0" aria-label="Left door"><span class="tag name">named</span><span class="lamp"></span><span>Left</span><span class="hours"></span><span class="tag seal">sealed</span></button>
+      <button class="door" data-door="1" aria-label="Middle door"><span class="tag name">named</span><span class="lamp"></span><span>Middle</span><span class="hours"></span><span class="tag seal">sealed</span></button>
+      <button class="door" data-door="2" aria-label="Right door"><span class="tag name">named</span><span class="lamp"></span><span>Right</span><span class="hours"></span><span class="tag seal">sealed</span></button>
+    </div>
+    <p id="note" aria-live="polite"></p>
+  </div>
+  <div id="card">
+    <h1 id="title">Seen</h1>
+    <div id="body"></div>
+    <div id="actions"><button id="go">Begin</button><button id="forget" class="quiet" hidden>Forget me</button></div>
+  </div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
