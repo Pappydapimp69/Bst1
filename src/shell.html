@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#05070d">
+<title>Low Tide</title>
+<style>
+[hidden] { display: none !important; }
+:root {
+  --bg: #05070d;
+  --panel: rgba(9, 13, 24, 0.94);
+  --panel-edge: #2a3550;
+  --ink: #ece6d6;
+  --ink-dim: #b4b2a8;
+  --lantern: #ffc46b;
+  --moss: #7ff0c4;
+  --focus: #ffffff;
+  --btn: #16203a;
+  --btn-edge: #3b4a6e;
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none; overscroll-behavior: none; }
+#app { position: fixed; inset: 0; height: 100vh; height: 100dvh; display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); }
+#top { grid-row: 1; grid-column: 1; padding: calc(4px + var(--sat)) calc(10px + var(--sar)) 4px calc(10px + var(--sal));
+  background: #070a14; border-bottom: 1px solid #141c30; min-height: 58px; }
+#topRow { display: flex; align-items: center; gap: 10px; height: 26px; font-size: 15px; }
+#nightLbl { white-space: nowrap; color: var(--ink); letter-spacing: 0.04em; }
+#tideBox { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+#tideGauge { flex: 1; height: 10px; border-radius: 5px; background: #121a2e; border: 1px solid #2a3550; position: relative; overflow: hidden; max-width: 260px; }
+#tideFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, #2b6f86, #4fa3b8); }
+#tideLbl { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+#signLbl { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+#hint { font-size: 15px; line-height: 20px; height: 40px; color: var(--ink); overflow: hidden; }
+body.land #hint { height: 22px; line-height: 22px; white-space: nowrap; text-overflow: ellipsis; }
+#hint b { color: var(--lantern); font-weight: 600; }
+#stage { grid-row: 2; grid-column: 1; position: relative; min-height: 0; overflow: hidden; background: #03050a; }
+#view { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#bar { grid-row: 3; grid-column: 1; display: flex; gap: 6px; justify-content: center; align-items: stretch;
+  padding: 6px calc(8px + var(--sar)) calc(6px + var(--sab)) calc(8px + var(--sal)); background: #070a14; border-top: 1px solid #141c30; }
+body.land #app { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr); }
+body.land #bar { grid-row: 1 / 3; grid-column: 2; flex-direction: column; justify-content: center; border-top: 0; border-left: 1px solid #141c30;
+  padding: calc(6px + var(--sat)) calc(6px + var(--sar)) calc(6px + var(--sab)) 6px; }
+button { font: inherit; color: var(--ink); }
+.btn { min-width: 48px; min-height: 48px; border-radius: 12px; background: var(--btn); border: 1px solid var(--btn-edge);
+  color: var(--ink); padding: 4px 10px; font-size: 16px; cursor: pointer; touch-action: manipulation; }
+.btn:focus { outline: none; }
+.btn:focus-visible, .btn.pf { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn[aria-disabled="true"] { opacity: 0.62; cursor: default; }
+.hb { flex: 1 1 0; max-width: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 3px 4px; }
+body.land .hb { flex: 0 0 auto; width: 74px; min-height: 54px; max-width: none; }
+.hb svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.hb .lb { font-size: 13px; line-height: 15px; }
+.hb .k { font-size: 11px; line-height: 12px; color: var(--ink-dim); font-family: ui-monospace, Menlo, Consolas, monospace; min-height: 12px; }
+.hb.glow { border-color: var(--lantern); box-shadow: 0 0 0 2px rgba(255, 196, 107, 0.45); }
+/* overlays */
+.ov { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10;
+  background: rgba(3, 5, 10, 0.66); padding: calc(10px + var(--sat)) calc(10px + var(--sar)) calc(10px + var(--sab)) calc(10px + var(--sal)); }
+.card { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 16px; padding: 18px; width: min(560px, 100%);
+  max-height: 100%; overflow: auto; text-align: center; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); }
+.card h1 { font-size: clamp(30px, 8vw, 46px); margin: 4px 0 2px; letter-spacing: 0.12em; font-weight: 500; }
+.card h2 { font-size: 22px; margin: 2px 0 8px; font-weight: 500; letter-spacing: 0.05em; }
+.card p { margin: 6px 0; line-height: 1.45; font-size: 16px; color: var(--ink); }
+.card .sub { color: var(--ink-dim); font-size: 15px; }
+.col { display: flex; flex-direction: column; gap: 8px; align-items: stretch; margin-top: 12px; }
+.col .btn { width: 100%; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+#title { background: linear-gradient(180deg, rgba(3, 5, 10, 0.2), rgba(3, 5, 10, 0.75)); }
+#title .card { background: rgba(9, 13, 24, 0.86); }
+canvas.pic { display: block; margin: 8px auto; border-radius: 10px; max-width: 100%; max-height: 34vh; max-height: 34dvh; width: auto; height: auto; }
+@media (max-height: 520px) { .card .col { flex-direction: row; flex-wrap: wrap; } .card .col > .btn { flex: 1 1 40%; width: auto; } .card { padding: 12px; } .card p { margin: 3px 0; font-size: 15px; } }
+/* journal */
+#journal .card { width: min(820px, 100%); height: 100%; display: flex; flex-direction: column; padding: 12px; text-align: left; }
+#jHead { display: flex; gap: 8px; align-items: center; }
+#jHead .grow { flex: 1; }
+.tab[aria-selected="true"] { border-color: var(--lantern); color: var(--lantern); }
+#jBody { flex: 1; overflow: auto; margin-top: 10px; padding: 2px; }
+#jHint { font-size: 14px; color: var(--ink-dim); margin: 6px 2px 0; min-height: 18px; }
+.signs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.sign { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; min-height: 96px; }
+.sign canvas { width: 40px; height: 40px; }
+.sign .st { font-size: 12px; color: var(--ink-dim); }
+.sign.unheard { opacity: 0.5; }
+.phr { display: flex; align-items: center; gap: 8px; padding: 6px; border-bottom: 1px solid #1b2440; flex-wrap: wrap; }
+.phr canvas { height: 36px; }
+.choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; margin-top: 8px; }
+.choice { display: flex; flex-direction: column; align-items: center; padding: 4px; min-height: 64px; }
+.choice canvas { width: 36px; height: 36px; }
+.choice.sel { border-color: var(--lantern); box-shadow: 0 0 0 2px rgba(255, 196, 107, 0.5); }
+.detail { display: flex; gap: 12px; align-items: center; margin-bottom: 6px; }
+.detail canvas { width: 64px; height: 64px; }
+.status { font-size: 15px; }
+#toast { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: rgba(7, 10, 20, 0.9); border: 1px solid #2a3550;
+  padding: 6px 12px; border-radius: 10px; font-size: 15px; pointer-events: none; max-width: 92%; text-align: center; }
+#soundNote { position: absolute; right: 8px; bottom: 8px; background: rgba(7, 10, 20, 0.9); border: 1px solid #2a3550; padding: 4px 10px;
+  border-radius: 8px; font-size: 13px; color: var(--ink-dim); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <div id="topRow">
+      <span id="nightLbl">Night 1</span>
+      <div id="tideBox"><span id="tideLbl">Low water</span><div id="tideGauge"><div id="tideFill"></div></div></div>
+      <span id="signLbl">Signs 0/15</span>
+    </div>
+    <div id="hint" aria-live="polite"></div>
+  </div>
+  <div id="stage">
+    <canvas id="view" aria-label="The shore"></canvas>
+    <div id="toast" hidden></div>
+    <div id="soundNote" hidden>Sound waits for a tap or key</div>
+  </div>
+  <div id="bar">
+    <button class="btn hb" id="bSing" data-act="sing"><svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg><span class="lb">Sing</span><span class="k"></span></button>
+    <button class="btn hb" id="bNote" data-act="note"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/></svg><span class="lb">Note</span><span class="k"></span></button>
+    <button class="btn hb" id="bStop" data-act="stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span class="lb">Stop</span><span class="k"></span></button>
+    <button class="btn hb" id="bJournal" data-act="journal"><svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 4h-4a2 2 0 0 0-2 2"/><path d="M20 4v14h-6"/></svg><span class="lb">Journal</span><span class="k"></span></button>
+    <button class="btn hb" id="bMenu" data-act="menu"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="lb">Menu</span><span class="k"></span></button>
+  </div>
+</div>
+
+<div id="title" class="ov" hidden>
+  <div class="card">
+    <h1>LOW TIDE</h1>
+    <p class="sub">The last keeper. A drowned village. One tide each night.</p>
+    <div class="col">
+      <button class="btn" id="tContinue">Continue</button>
+      <button class="btn" id="tNew">New journal</button>
+      <div class="row"><button class="btn" id="tSound">Sound: on</button><button class="btn" id="tMotion">Motion: system</button></div>
+    </div>
+    <p class="sub" id="tNote"></p>
+  </div>
+</div>
+
+<div id="pause" class="ov" hidden>
+  <div class="card">
+    <h2>The tide waits</h2>
+    <div class="col">
+      <button class="btn" id="pResume">Back to the shore</button>
+      <button class="btn" id="pJournal">Journal</button>
+      <div class="row"><button class="btn" id="pSound">Sound: on</button><button class="btn" id="pMotion">Motion: system</button></div>
+      <button class="btn" id="pTitle">Title (progress is kept)</button>
+    </div>
+    <p class="sub" id="pNote"></p>
+  </div>
+</div>
+
+<div id="journal" class="ov" hidden>
+  <div class="card">
+    <div id="jHead">
+      <button class="btn tab" id="jTabSigns" aria-selected="true">Signs</button>
+      <button class="btn tab" id="jTabShore" aria-selected="false">Shore</button>
+      <span class="grow"></span>
+      <button class="btn" id="jClose">Close <span class="k" id="jCloseK"></span></button>
+    </div>
+    <div id="jHint"></div>
+    <div id="jBody"></div>
+  </div>
+</div>
+
+<div id="dawn" class="ov" hidden>
+  <div class="card">
+    <h2 id="dTitle">Dawn</h2>
+    <canvas class="pic" id="dPic" width="480" height="150"></canvas>
+    <div id="dBody"></div>
+    <div class="col"><button class="btn" id="dNext">Walk the next night</button><button class="btn" id="dJournal">Read the journal</button></div>
+  </div>
+</div>
+
+<div id="ending" class="ov" hidden>
+  <div class="card">
+    <canvas class="pic" id="ePic" width="480" height="300"></canvas>
+    <p id="eLine1"></p>
+    <p class="sub" id="eLine2"></p>
+    <div class="col"><button class="btn" id="eOn">Keep the light</button><button class="btn" id="eTitle">Title</button></div>
+  </div>
+</div>
+
+<script type="text/plain" id="seWorklet">/*@WORKLET@*/</script>
+<script>/*@ENGINE@*/</script>
+<script>/*@GAME@*/</script>
+</body>
+</html>
